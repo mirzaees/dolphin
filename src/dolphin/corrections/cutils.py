@@ -21,7 +21,7 @@ from dolphin._log import get_log
 from dolphin._types import Bbox, Filename
 from dolphin import io, stitching
 from dolphin.utils import group_by_date
-from dolphin.opera_utils import get_union_polygon
+from opera_utils import get_union_polygon
 
 #dal.UseExceptions()
 
