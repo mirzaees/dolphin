@@ -78,7 +78,8 @@ def run(
         cor_filenames=cor_file_list,
         output_path=output_path,
         nlooks=nlooks,
-        mask_file=output_mask,
+        mask_filename=output_mask,
+        zero_where_masked=unwrap_options.zero_where_masked,
         max_jobs=unwrap_options.n_parallel_jobs,
         ntiles=unwrap_options.ntiles,
         tile_overlap=unwrap_options.tile_overlap,
@@ -90,6 +91,9 @@ def run(
         scratchdir=unwrap_scratchdir,
         run_goldstein=unwrap_options.run_goldstein,
         alpha=unwrap_options.alpha,
+        run_interpolation=unwrap_options.run_interpolation,
+        max_radius=unwrap_options.max_radius,
+        interpolation_cor_threshold=unwrap_options.interpolation_cor_threshold,
     )
 
     if add_overviews:
