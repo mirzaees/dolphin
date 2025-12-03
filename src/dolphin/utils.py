@@ -419,14 +419,77 @@ def set_num_threads(num_threads: int):
     import numba
     from threadpoolctl import ThreadpoolController
 
+    # CRITICAL: Set environment variables first (for newly imported libraries)
+    os.environ["OMP_NUM_THREADS"] = str(num_threads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(num_threads)
+    os.environ["MKL_NUM_THREADS"] = str(num_threads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(num_threads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(num_threads)
+    os.environ["TF_NUM_INTEROP_THREADS"] = "1"
+    os.environ["TF_NUM_INTRAOP_THREADS"] = str(num_threads)
+
     # Set the environment variables for the workers
     controller = ThreadpoolController()
     controller.limit(limits=num_threads)
     # https://numba.readthedocs.io/en/stable/user/threading-layer.html#example-of-limiting-the-number-of-threads
     num_cpus = get_cpu_count()
     numba.set_num_threads(min(num_cpus, num_threads))
-    # jax setup is harder, for now
-    os.environ["XLA_FLAGS"] = f"--xla_force_host_platform_device_count={num_threads}"
+    # jax setup - set both env var and runtime limit
+    xla_flags = (
+        f"--xla_cpu_multi_thread_eigen=false "
+        f"intra_op_parallelism_threads={num_threads}"
+    )
+    os.environ["XLA_FLAGS"] = xla_flags
+    os.environ["JAX_PLATFORM_NAME"] = "cpu"
+
+
+def get_threadpool_limits_context(num_threads: int):
+    """Get a context manager that limits threads for the duration of a block.
+
+    This is the most reliable way to limit threads in multiprocessing workers,
+    as it doesn't rely on environment variables being set before import.
+
+    Parameters
+    ----------
+    num_threads : int
+        Number of threads to limit to
+
+    Returns
+    -------
+    context manager
+        Context manager from threadpoolctl
+
+    Examples
+    --------
+    >>> with get_threadpool_limits_context(2):
+    ...     # All numpy/scipy operations here use max 2 threads
+    ...     result = expensive_computation()
+    """
+    from threadpoolctl import threadpool_limits
+
+    return threadpool_limits(limits=num_threads, user_api="blas")
+
+
+def simple_worker_initializer(num_threads: int = 1):
+    """Simple worker initializer for ProcessPoolExecutor.
+
+    Sets thread limits to prevent oversubscription in multiprocessing pools.
+    Use this as the `initializer` parameter for ProcessPoolExecutor.
+
+    Parameters
+    ----------
+    num_threads : int, optional
+        Number of threads per worker, by default 1
+
+    Examples
+    --------
+    >>> from functools import partial
+    >>> from concurrent.futures import ProcessPoolExecutor
+    >>> init = partial(simple_worker_initializer, num_threads=2)
+    >>> with ProcessPoolExecutor(max_workers=4, initializer=init) as pool:
+    ...     results = pool.map(my_function, data)
+    """
+    set_num_threads(num_threads)
 
 
 def get_cpu_count():

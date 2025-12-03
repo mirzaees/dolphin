@@ -242,7 +242,16 @@ def filter_rasters(
     output_dir.mkdir(exist_ok=True)
     ctx = mp.get_context("spawn")
 
-    with ProcessPoolExecutor(max_workers, mp_context=ctx) as pool:
+    # Import here to avoid circular imports
+    from dolphin.utils import simple_worker_initializer
+    from functools import partial
+
+    # Set 1 thread per worker to avoid oversubscription
+    init_func = partial(simple_worker_initializer, num_threads=1)
+
+    with ProcessPoolExecutor(
+        max_workers, mp_context=ctx, initializer=init_func
+    ) as pool:
         return list(
             pool.map(
                 _filter_and_save,

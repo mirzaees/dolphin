@@ -27,8 +27,8 @@ logger = logging.getLogger("dolphin")
 def _worker_init(lock, num_threads: int, gpu_enabled: bool):
     """Initialize worker process with thread limits.
 
-    This sets environment variables before importing numerical libraries,
-    then applies threadpoolctl limits.
+    This is called once when each worker process starts, BEFORE any work is done.
+    It ensures thread limits are set before libraries spawn their thread pools.
 
     Parameters
     ----------
@@ -39,33 +39,15 @@ def _worker_init(lock, num_threads: int, gpu_enabled: bool):
     gpu_enabled : bool
         Whether GPU is enabled
     """
-    import os
-
-    # CRITICAL: Set environment variables BEFORE any imports
-    # These control thread pools in BLAS libraries (OpenBLAS, MKL, etc.)
-    os.environ["OMP_NUM_THREADS"] = str(num_threads)
-    os.environ["OPENBLAS_NUM_THREADS"] = str(num_threads)
-    os.environ["MKL_NUM_THREADS"] = str(num_threads)
-    os.environ["VECLIB_MAXIMUM_THREADS"] = str(num_threads)
-    os.environ["NUMEXPR_NUM_THREADS"] = str(num_threads)
-    os.environ["TF_NUM_INTEROP_THREADS"] = "1"
-    os.environ["TF_NUM_INTRAOP_THREADS"] = str(num_threads)
-
-    # JAX/XLA thread control
-    xla_flags = (
-        f"--xla_cpu_multi_thread_eigen=false "
-        f"--xla_force_host_platform_device_count={num_threads}"
-    )
-    os.environ["XLA_FLAGS"] = xla_flags
-    os.environ["JAX_PLATFORM_NAME"] = "cpu"
-
     # Set tqdm lock for progress bars
     tqdm.set_lock(lock)
 
-    # Now import and configure thread limits
-    # (imports happen here for the first time in this worker)
+    # Configure GPU
     if not gpu_enabled:
         utils.disable_gpu()
+
+    # Set thread limits (this sets env vars + applies threadpoolctl)
+    # This MUST be called before any heavy computation
     utils.set_num_threads(num_threads)
 
 
