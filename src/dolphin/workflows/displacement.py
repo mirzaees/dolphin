@@ -24,6 +24,51 @@ from .config import DisplacementWorkflow
 logger = logging.getLogger("dolphin")
 
 
+def _worker_init(lock, num_threads: int, gpu_enabled: bool):
+    """Initialize worker process with thread limits.
+
+    This sets environment variables before importing numerical libraries,
+    then applies threadpoolctl limits.
+
+    Parameters
+    ----------
+    lock : multiprocessing.RLock
+        Lock for tqdm progress bars
+    num_threads : int
+        Number of threads per worker
+    gpu_enabled : bool
+        Whether GPU is enabled
+    """
+    import os
+
+    # CRITICAL: Set environment variables BEFORE any imports
+    # These control thread pools in BLAS libraries (OpenBLAS, MKL, etc.)
+    os.environ["OMP_NUM_THREADS"] = str(num_threads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(num_threads)
+    os.environ["MKL_NUM_THREADS"] = str(num_threads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(num_threads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(num_threads)
+    os.environ["TF_NUM_INTEROP_THREADS"] = "1"
+    os.environ["TF_NUM_INTRAOP_THREADS"] = str(num_threads)
+
+    # JAX/XLA thread control
+    xla_flags = (
+        f"--xla_cpu_multi_thread_eigen=false "
+        f"--xla_force_host_platform_device_count={num_threads}"
+    )
+    os.environ["XLA_FLAGS"] = xla_flags
+    os.environ["JAX_PLATFORM_NAME"] = "cpu"
+
+    # Set tqdm lock for progress bars
+    tqdm.set_lock(lock)
+
+    # Now import and configure thread limits
+    # (imports happen here for the first time in this worker)
+    if not gpu_enabled:
+        utils.disable_gpu()
+    utils.set_num_threads(num_threads)
+
+
 @dataclass
 class OutputPaths:
     """Output files of the `DisplacementWorkflow`."""
@@ -160,8 +205,12 @@ def run(
     with Executor(
         max_workers=num_workers,
         mp_context=ctx,
-        initializer=tqdm.set_lock,
-        initargs=(tqdm.get_lock(),),
+        initializer=_worker_init,
+        initargs=(
+            tqdm.get_lock(),
+            cfg.worker_settings.threads_per_worker,
+            cfg.worker_settings.gpu_enabled,
+        ),
     ) as exc:
         fut_to_burst = {
             exc.submit(
