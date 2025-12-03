@@ -1,6 +1,33 @@
 import os
 
 
+def _set_default_thread_limits():
+    """Set conservative thread limits before any numerical libraries import.
+
+    These are defaults; they can be overridden by the worker settings in config.
+    This prevents libraries from spawning unlimited threads on import.
+    """
+    # Only set if not already set by user
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+    os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
+    os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
+
+    # JAX/XLA defaults - critical for preventing massive thread spawning
+    if "XLA_FLAGS" not in os.environ:
+        os.environ["XLA_FLAGS"] = (
+            "--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1"
+        )
+    os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
+
+
+# Set thread limits BEFORE any imports
+_set_default_thread_limits()
+
+
 def main() -> int:
     """Top-level command line interface to the workflows."""
     import sys
