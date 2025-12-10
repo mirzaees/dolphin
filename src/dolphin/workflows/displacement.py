@@ -2,14 +2,11 @@
 from __future__ import annotations
 
 import logging
-
-# import contextlib
-import multiprocessing as mp
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
+from joblib import Parallel, delayed
 from opera_utils import group_by_burst
 from tqdm.auto import tqdm
 
@@ -24,31 +21,33 @@ from .config import DisplacementWorkflow
 logger = logging.getLogger("dolphin")
 
 
-def _worker_init(lock, num_threads: int, gpu_enabled: bool):
-    """Initialize worker process with thread limits.
-
-    This is called once when each worker process starts, BEFORE any work is done.
-    It ensures thread limits are set before libraries spawn their thread pools.
+def _run_wrapped_phase_with_workers(
+    burst_cfg, debug: bool, max_workers: int, position: int
+):
+    """Wrapper function for parallel execution with joblib.
 
     Parameters
     ----------
-    lock : multiprocessing.RLock
-        Lock for tqdm progress bars
-    num_threads : int
-        Number of threads per worker
-    gpu_enabled : bool
-        Whether GPU is enabled
+    burst_cfg : DisplacementWorkflow
+        Configuration for this burst
+    debug : bool
+        Enable debug logging
+    max_workers : int
+        Number of workers for this burst
+    position : int
+        Position for tqdm progress bar
+
+    Returns
+    -------
+    WrappedPhaseOutput
+        Output from wrapped phase estimation
     """
-    # Set tqdm lock for progress bars
-    tqdm.set_lock(lock)
-
-    # Configure GPU
-    if not gpu_enabled:
-        utils.disable_gpu()
-
-    # Set thread limits (this sets env vars + applies threadpoolctl)
-    # This MUST be called before any heavy computation
-    utils.set_num_threads(num_threads)
+    return wrapped_phase.run(
+        burst_cfg,
+        debug=debug,
+        max_workers=max_workers,
+        tqdm_kwargs={"position": position},
+    )
 
 
 @dataclass
@@ -174,60 +173,54 @@ def run(
     # multiple comp slcs by burst (they'll have the same filename)
     comp_slc_dict: dict[str, list[Path]] = {}
     # Now for each burst, run the wrapped phase estimation
-    # Try running several bursts in parallel...
-    # Use the Dummy one if not going parallel, as debugging is much simpler
+    # Use joblib for better process/thread management
     num_workers = cfg.worker_settings.n_parallel_bursts
     num_parallel = min(num_workers, len(grouped_slc_files))
-    Executor = (
-        ProcessPoolExecutor if num_parallel > 1 else utils.DummyProcessPoolExecutor
-    )
     workers_per_burst = num_workers // num_parallel
-    ctx = mp.get_context("spawn")
-    tqdm.set_lock(ctx.RLock())
-    with Executor(
-        max_workers=num_workers,
-        mp_context=ctx,
-        initializer=_worker_init,
-        initargs=(
-            tqdm.get_lock(),
-            cfg.worker_settings.threads_per_worker,
-            cfg.worker_settings.gpu_enabled,
-        ),
-    ) as exc:
-        fut_to_burst = {
-            exc.submit(
-                wrapped_phase.run,
-                burst_cfg,
-                debug=debug,
-                max_workers=workers_per_burst,
-                tqdm_kwargs={
-                    "position": i,
-                },
-            ): burst
-            for i, (burst, burst_cfg) in enumerate(wrapped_phase_cfgs)
-        }
-        for fut, burst in fut_to_burst.items():
-            wrapped_phase_output = fut.result()
-            (
-                cur_ifg_list,
-                cur_crlb_files,
-                cur_closure_phase_files,
-                comp_slcs,
-                temp_coh_files,
-                ps_file,
-                amp_disp_file,
-                shp_count_files,
-                similarity_files,
-            ) = wrapped_phase_output
-            ifg_file_list.extend(cur_ifg_list)
-            crlb_files.extend(cur_crlb_files)
-            closure_phase_files.extend(cur_closure_phase_files)
-            comp_slc_dict[burst] = comp_slcs
-            temp_coh_file_list.extend(temp_coh_files)
-            ps_file_list.append(ps_file)
-            amp_dispersion_file_list.append(amp_disp_file)
-            shp_count_file_list.extend(shp_count_files)
-            similarity_file_list.extend(similarity_files)
+
+    # Disable GPU if configured
+    if not cfg.worker_settings.gpu_enabled:
+        utils.disable_gpu()
+
+    # Use joblib Parallel with loky backend for better thread control
+    # inner_max_num_threads limits threads within each worker
+    results = Parallel(
+        n_jobs=num_parallel,
+        backend="loky",  # Better than multiprocessing
+        verbose=10 if debug else 0,
+        inner_max_num_threads=cfg.worker_settings.threads_per_worker,
+    )(
+        delayed(_run_wrapped_phase_with_workers)(
+            burst_cfg,
+            debug=debug,
+            max_workers=workers_per_burst,
+            position=i,
+        )
+        for i, (burst, burst_cfg) in enumerate(wrapped_phase_cfgs)
+    )
+
+    # Process results
+    for (burst, _), wrapped_phase_output in zip(wrapped_phase_cfgs, results, strict=True):
+        (
+            cur_ifg_list,
+            cur_crlb_files,
+            cur_closure_phase_files,
+            comp_slcs,
+            temp_coh_files,
+            ps_file,
+            amp_disp_file,
+            shp_count_files,
+            similarity_files,
+        ) = wrapped_phase_output
+        ifg_file_list.extend(cur_ifg_list)
+        crlb_files.extend(cur_crlb_files)
+        closure_phase_files.extend(cur_closure_phase_files)
+        comp_slc_dict[burst] = comp_slcs
+        temp_coh_file_list.extend(temp_coh_files)
+        ps_file_list.append(ps_file)
+        amp_dispersion_file_list.append(amp_disp_file)
+        shp_count_file_list.extend(shp_count_files)
+        similarity_file_list.extend(similarity_files)
 
     # ###################################
     # 2. Stitch burst-wise interferograms

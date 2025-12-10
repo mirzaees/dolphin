@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import multiprocessing as mp
 import tempfile
-from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
 from pathlib import Path
 from typing import Sequence
 
 import numpy as np
+from joblib import Parallel, delayed
 from numpy.typing import ArrayLike, NDArray
 
 
@@ -240,30 +239,30 @@ def filter_rasters(
         assert unw_filenames
         output_dir = unw_filenames[0].parent
     output_dir.mkdir(exist_ok=True)
-    ctx = mp.get_context("spawn")
 
-    # Import here to avoid circular imports
-    from dolphin.utils import simple_worker_initializer
-    from functools import partial
-
-    # Set 1 thread per worker to avoid oversubscription
-    init_func = partial(simple_worker_initializer, num_threads=1)
-
-    with ProcessPoolExecutor(
-        max_workers, mp_context=ctx, initializer=init_func
-    ) as pool:
-        return list(
-            pool.map(
-                _filter_and_save,
-                unw_filenames,
-                cor_filenames or repeat(None),
-                conncomp_filenames or repeat(None),
-                repeat(output_dir),
-                repeat(wavelength_cutoff),
-                repeat(bad_pixel_mask),
-                repeat(correlation_cutoff),
-            )
+    # Use joblib for better process/thread management
+    # inner_max_num_threads=1 prevents thread oversubscription
+    return Parallel(
+        n_jobs=max_workers,
+        backend="loky",
+        inner_max_num_threads=1,
+    )(
+        delayed(_filter_and_save)(
+            unw_file,
+            cor_file,
+            conncomp_file,
+            output_dir,
+            wavelength_cutoff,
+            bad_pixel_mask,
+            correlation_cutoff,
         )
+        for unw_file, cor_file, conncomp_file in zip(
+            unw_filenames,
+            cor_filenames or repeat(None),
+            conncomp_filenames or repeat(None),
+            strict=False,
+        )
+    )
 
 
 def _filter_and_save(
