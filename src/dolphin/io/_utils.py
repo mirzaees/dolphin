@@ -152,7 +152,7 @@ def repack_raster(
 
     with rio.open(raster_path) as src:
         profile = src.profile
-        profile.update(**options)
+        profile.update(driver="GTiff", **options)
         # Work in blocks on the input raster
         blocks = iter_blocks(
             arr_shape=(src.height, src.width),
