@@ -786,6 +786,10 @@ class VRTStack(StackReader):
         self.gt = ds.GetGeoTransform()
         self.proj = ds.GetProjection()
         self.srs = ds.GetSpatialRef()
+        if not self.proj:
+            logger.warning(
+                f"Input file has no projection/CRS defined: {self._gdal_file_strings[0]}"
+            )
         ds = bnd1 = None
         # Save the subset info
 

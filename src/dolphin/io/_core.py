@@ -332,9 +332,17 @@ def get_raster_crs(filename: Filename) -> CRS:
     CRS
         CRS.
 
+    Raises
+    ------
+    ValueError
+        If the file has no CRS defined.
+
     """
     ds = _get_gdal_ds(filename)
-    return CRS.from_wkt(ds.GetProjection())
+    proj = ds.GetProjection()
+    if not proj:
+        raise ValueError(f"File {filename} has no CRS defined")
+    return CRS.from_wkt(proj)
 
 
 def get_raster_gt(filename: Filename) -> list[float]:
@@ -879,6 +887,10 @@ class FileInfo:
         # If not provided, attempt to get projection/geotransform from like_filename
         if projection is None and ds_like is not None:
             projection = ds_like.GetProjection()
+            if not projection:
+                logger.warning(
+                    f"like_filename has no projection/CRS defined: {like_filename}"
+                )
         if geotransform is None and ds_like is not None:
             geotransform = ds_like.GetGeoTransform()
             # If we're using strides, adjust the geotransform

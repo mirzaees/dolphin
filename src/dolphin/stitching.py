@@ -422,6 +422,11 @@ def warp_to_projection(
         if proj_in == projection:
             warped_files.append(p)
             continue
+        # If the file has no CRS, skip reprojection and use it as-is
+        if not proj_in or ds.GetSpatialRef() is None:
+            logger.warning(f"File {p} has no CRS defined, skipping reprojection")
+            warped_files.append(p)
+            continue
         warped_fn = Path(dirname) / _get_temp_filename(p, idx, "_warped")
         warped_fn = Path(dirname) / f"{p.stem}_{idx}_warped.vrt"
         from_srs_name = ds.GetSpatialRef().GetName()
@@ -448,7 +453,11 @@ def warp_to_projection(
 def _get_mode_projection(filenames: Iterable[Filename]) -> str:
     """Get the most common projection in the list."""
     projs = [gdal.Open(fspath(fn)).GetProjection() for fn in filenames]
-    return max(set(projs), key=projs.count)
+    # Filter out empty projections
+    valid_projs = [p for p in projs if p]
+    if not valid_projs:
+        raise ValueError("None of the input files have a valid CRS defined")
+    return max(set(valid_projs), key=valid_projs.count)
 
 
 def _get_resolution(filenames: Iterable[Filename]) -> tuple[float, float]:
