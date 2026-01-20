@@ -106,7 +106,7 @@ def set_nodata_values(
         # Reform to be like a numpy mask
         bad_like = ~(src.read_masks(1).astype(bool))
 
-    with rio.open(filename, "r+") as dst:
+    with rio.open(filename, "r+", driver="GTiff") as dst:
         # We also want to keep the currently-nodata-pixels as nodata,
         # so we combine the `like_filename`'s nodata and this mask
         arr = dst.read(1)

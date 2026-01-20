@@ -831,7 +831,8 @@ class VRTStack(StackReader):
         ds = gdal.Open(fspath(self.outfile), gdal.GA_Update)
         ds.SetGeoTransform(self.gt)
         ds.SetProjection(self.proj)
-        ds.SetSpatialRef(self.srs)
+        if self.srs is not None:
+            ds.SetSpatialRef(self.srs)
         if self.nodata is not None:
             for i in range(ds.RasterCount):
                 # ds.GetRasterBand(i + 1).SetNoDataValue(self.nodatavals[i])

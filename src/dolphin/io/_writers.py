@@ -331,6 +331,7 @@ class RasterWriter(DatasetWriter, AbstractContextManager["RasterWriter"]):
         with rasterio.open(
             self.filename,
             "r+",
+            driver="GTiff",
         ) as dataset:
             if len(key) == 2:
                 rows, cols = key

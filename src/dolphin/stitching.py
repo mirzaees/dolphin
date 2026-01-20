@@ -424,7 +424,8 @@ def warp_to_projection(
             continue
         warped_fn = Path(dirname) / _get_temp_filename(p, idx, "_warped")
         warped_fn = Path(dirname) / f"{p.stem}_{idx}_warped.vrt"
-        from_srs_name = ds.GetSpatialRef().GetName()
+        from_srs = ds.GetSpatialRef()
+        from_srs_name = from_srs.GetName() if from_srs else "Unknown"
         to_srs_name = osr.SpatialReference(projection).GetName()
         logger.info(
             f"Reprojecting {p} from {from_srs_name} to match mode projection"

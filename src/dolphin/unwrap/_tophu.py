@@ -191,7 +191,7 @@ def multiscale_unwrap(
         from ._post_process import interpolate_masked_gaps
 
         with (
-            rio.open(unw_filename, mode="r+") as u_src,
+            rio.open(unw_filename, mode="r+", driver="GTiff") as u_src,
             rio.open(igram_rb.filepath) as i_src,
         ):
             unw = u_src.read(1)
