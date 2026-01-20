@@ -171,8 +171,13 @@ class RasterWriter(DatasetWriter, AbstractContextManager["RasterWriter"]):
     """int : For floating point rasters, the number of mantissa bits to keep."""
 
     def __post_init__(self) -> None:
-        # Open the dataset.
-        self.dataset = rasterio.open(self.filename, mode="r+")
+        # Open the dataset. Explicitly specify GTiff driver for .tif files
+        # to avoid rasterio failing to find the writer.
+        driver = None
+        suffix = Path(self.filename).suffix.lower()
+        if suffix in (".tif", ".tiff"):
+            driver = "GTiff"
+        self.dataset = rasterio.open(self.filename, mode="r+", driver=driver)
 
         # Check that `band` is a valid band index in the dataset.
         nbands = self.dataset.count
@@ -248,6 +253,8 @@ class RasterWriter(DatasetWriter, AbstractContextManager["RasterWriter"]):
         if like_filename is not None:
             with rasterio.open(like_filename) as dataset:
                 kwargs = dataset.profile | kwargs
+            # Default to GTiff driver to ensure the file is writable
+            kwargs.setdefault("driver", "GTiff")
 
         if width is not None:
             kwargs["width"] = width
