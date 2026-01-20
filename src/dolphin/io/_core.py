@@ -246,20 +246,28 @@ def format_nc_filename(filename: Filename, ds_name: Optional[str] = None) -> str
 
 def copy_projection(src_file: Filename, dst_file: Filename) -> None:
     """Copy projection/geotransform from `src_file` to `dst_file`."""
+    import rasterio as rio
+
     ds_src = _get_gdal_ds(src_file)
     projection = ds_src.GetProjection()
     geotransform = ds_src.GetGeoTransform()
     nodata = ds_src.GetRasterBand(1).GetNoDataValue()
 
-    if projection is None and geotransform is None:
-        logger.info("No projection or geotransform found on file %s", input)
+    # Fallback to rasterio if GDAL doesn't return projection (e.g., LIBERTIFF files)
+    if not projection:
+        with rio.open(fspath(src_file)) as src:
+            if src.crs is not None:
+                projection = src.crs.to_wkt()
+
+    if not projection and geotransform is None:
+        logger.warning("No projection or geotransform found on file %s", src_file)
         return
     ds_dst = gdal.Open(fspath(dst_file), gdal.GA_Update)
 
     if geotransform is not None and geotransform != (0, 1, 0, 0, 0, 1):
         ds_dst.SetGeoTransform(geotransform)
 
-    if projection is not None and projection != "":
+    if projection:
         ds_dst.SetProjection(projection)
 
     if nodata is not None:
@@ -338,8 +346,15 @@ def get_raster_crs(filename: Filename) -> CRS:
         If the file has no CRS defined.
 
     """
+    import rasterio as rio
+
     ds = _get_gdal_ds(filename)
     proj = ds.GetProjection()
+    # Fallback to rasterio if GDAL doesn't return projection (e.g., LIBERTIFF files)
+    if not proj:
+        with rio.open(fspath(filename)) as src:
+            if src.crs is not None:
+                return src.crs
     if not proj:
         raise ValueError(f"File {filename} has no CRS defined")
     return CRS.from_wkt(proj)
@@ -887,6 +902,13 @@ class FileInfo:
         # If not provided, attempt to get projection/geotransform from like_filename
         if projection is None and ds_like is not None:
             projection = ds_like.GetProjection()
+            # Fallback to rasterio if GDAL doesn't return projection (e.g., LIBERTIFF)
+            if not projection:
+                import rasterio as rio
+
+                with rio.open(fspath(like_filename)) as src:
+                    if src.crs is not None:
+                        projection = src.crs.to_wkt()
             if not projection:
                 logger.warning(
                     f"like_filename has no projection/CRS defined: {like_filename}"
