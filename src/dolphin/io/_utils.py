@@ -152,7 +152,14 @@ def repack_raster(
 
     with rio.open(raster_path) as src:
         profile = src.profile
-        profile.update(**options)
+        # Force GTiff driver (source may use read-only drivers like LIBERTIFF)
+        # Explicitly preserve transform and crs to ensure geotransform is correct
+        profile.update(
+            driver="GTiff",
+            transform=src.transform,
+            crs=src.crs,
+            **options,
+        )
         # Work in blocks on the input raster
         blocks = iter_blocks(
             arr_shape=(src.height, src.width),

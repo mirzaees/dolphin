@@ -214,6 +214,7 @@ def _process_single_unw(
     interpolate_masked_gaps(unw, wrapped_phase)
     # Save the updated unwrapped phase
     kwargs = profile | {
+        "driver": "GTiff",  # Force GTiff (source may use read-only LIBERTIFF)
         "count": 1,
         "height": unw.shape[0],
         "width": unw.shape[1],
