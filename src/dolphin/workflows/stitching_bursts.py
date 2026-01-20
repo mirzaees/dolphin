@@ -14,7 +14,7 @@ from dolphin._log import log_runtime
 from dolphin._overviews import ImageType, create_image_overviews, create_overviews
 from dolphin._types import Bbox
 from dolphin.interferogram import estimate_interferometric_correlations
-from dolphin.io import EXTRA_COMPRESSED_TIFF_OPTIONS, repack_raster
+from dolphin.io import EXTRA_COMPRESSED_NBITS, EXTRA_COMPRESSED_TIFF_OPTIONS, repack_raster
 
 from .config import OutputOptions
 
@@ -133,6 +133,7 @@ def run(
         window_size=corr_window_size,
         num_workers=num_workers,
         options=EXTRA_COMPRESSED_TIFF_OPTIONS,
+        nbits=EXTRA_COMPRESSED_NBITS,
     )
 
     # Stitch the temporal coherence files by date

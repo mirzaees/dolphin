@@ -34,6 +34,7 @@ __all__ = [
     "DEFAULT_TIFF_OPTIONS",
     "DEFAULT_TILE_SHAPE",
     "EXTRA_COMPRESSED_TIFF_OPTIONS",
+    "EXTRA_COMPRESSED_NBITS",
     "copy_projection",
     "format_nc_filename",
     "get_raster_bounds",
@@ -73,9 +74,12 @@ DEFAULT_TIFF_OPTIONS_RIO = {
 EXTRA_COMPRESSED_TIFF_OPTIONS_RIO = DEFAULT_TIFF_OPTIONS_RIO | {
     "blockxsize": 512,
     "blockysize": 512,
-    "nbits": 16,
+    # Note: "nbits" moved to metadata - GDAL 3.11+ creates Float16 data type
+    # from NBITS=16 creation option, which rasterio doesn't support (KeyError: 15)
     "predictor": 2,
 }
+# NBITS value to set as metadata after file creation (avoids Float16 dtype issue)
+EXTRA_COMPRESSED_NBITS = 16
 # For gdal's bindings
 DEFAULT_TIFF_OPTIONS = tuple(
     f"{k.upper()}={v}" for k, v in DEFAULT_TIFF_OPTIONS_RIO.items()
@@ -591,6 +595,7 @@ def write_arr(
     nodata: Optional[float] = None,
     units: Optional[str] = None,
     description: Optional[str] = None,
+    nbits: Optional[int] = None,
 ):
     """Save an array to `output_name`.
 
@@ -636,6 +641,9 @@ def write_arr(
         Value is stored in the metadata as "units".
     description : str, optional
         Description of the raster bands stored in the metadata.
+    nbits : int, optional
+        Number of bits to use for the data. Set as IMAGE_STRUCTURE metadata.
+        Use this instead of NBITS creation option to avoid GDAL 3.11+ Float16 issue.
 
     """
     fi = FileInfo.from_user_inputs(
@@ -692,6 +700,10 @@ def write_arr(
             logger.debug(f"Writing band {i + 1}/{fi.nbands}")
             bnd = ds_out.GetRasterBand(i + 1)
             bnd.WriteArray(arr[i])
+
+    # Set NBITS as metadata (not creation option) to avoid GDAL 3.11+ Float16 issue
+    if nbits is not None:
+        ds_out.SetMetadataItem("NBITS", str(nbits), "IMAGE_STRUCTURE")
 
     ds_out.FlushCache()
     ds_out = None

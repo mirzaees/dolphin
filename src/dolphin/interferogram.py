@@ -673,6 +673,7 @@ def estimate_interferometric_correlations(
     options: Sequence[str] = io.DEFAULT_TIFF_OPTIONS,
     keep_bits: int = 10,
     num_workers: int = 3,
+    nbits: int | None = None,
 ) -> list[Path]:
     """Estimate correlations for a sequence of interferograms.
 
@@ -697,6 +698,8 @@ def estimate_interferometric_correlations(
     num_workers : int
         Number of threads to use for stitching in parallel.
         Default = 3
+    nbits : int, optional
+        Number of bits for IMAGE_STRUCTURE metadata. Default is None.
 
     Returns
     -------
@@ -728,6 +731,7 @@ def estimate_interferometric_correlations(
             like_filename=ifg_path,
             driver=out_driver,
             options=options,
+            nbits=nbits,
         )
 
     thread_map(
