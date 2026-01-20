@@ -248,6 +248,8 @@ class RasterWriter(DatasetWriter, AbstractContextManager["RasterWriter"]):
         if like_filename is not None:
             with rasterio.open(like_filename) as dataset:
                 kwargs = dataset.profile | kwargs
+            # Default to GTiff driver to ensure the file is writable
+            kwargs.setdefault("driver", "GTiff")
 
         if width is not None:
             kwargs["width"] = width
