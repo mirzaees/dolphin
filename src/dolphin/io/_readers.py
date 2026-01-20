@@ -786,6 +786,14 @@ class VRTStack(StackReader):
         self.gt = ds.GetGeoTransform()
         self.proj = ds.GetProjection()
         self.srs = ds.GetSpatialRef()
+        # Fallback to rasterio if GDAL doesn't return projection (e.g., LIBERTIFF files)
+        if not self.proj:
+            import rasterio as rio
+
+            with rio.open(self._gdal_file_strings[0]) as src:
+                if src.crs is not None:
+                    self.proj = src.crs.to_wkt()
+                    self.srs = None  # Will be set from proj in _write
         if not self.proj:
             logger.warning(
                 f"Input file has no projection/CRS defined: {self._gdal_file_strings[0]}"
