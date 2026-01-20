@@ -120,6 +120,8 @@ class VRTInterferogram(BaseModel, extra="allow"):
     pixel_function: Literal["cmul", "mul"] = "cmul"
     _template = """\
 <VRTDataset rasterXSize="{xsize}" rasterYSize="{ysize}">
+  <SRS>{srs}</SRS>
+  <GeoTransform>{geotransform}</GeoTransform>
     <VRTRasterBand dataType="CFloat32" band="1" subClass="VRTDerivedRasterBand">
         <PixelFunctionType>{pixel_function}</PixelFunctionType>
         <SimpleSource>
@@ -226,7 +228,24 @@ class VRTInterferogram(BaseModel, extra="allow"):
             logger.info(f"Removing {self.path}")
             self.path.unlink()
 
+        import rasterio as rio
+
         xsize, ysize = io.get_raster_xysize(self.ref_slc)
+
+        # Get projection and geotransform from source file
+        # Use rasterio as fallback for LIBERTIFF files
+        ds = gdal.Open(fspath(self.ref_slc))
+        srs = ds.GetProjection()
+        gt = ds.GetGeoTransform()
+        if not srs:
+            with rio.open(fspath(self.ref_slc)) as src:
+                if src.crs is not None:
+                    srs = src.crs.to_wkt()
+        ds = None
+
+        # Format geotransform as comma-separated string for VRT
+        gt_str = ", ".join(str(v) for v in gt) if gt else ""
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "w") as f:
             f.write(
@@ -237,9 +256,10 @@ class VRTInterferogram(BaseModel, extra="allow"):
                     sec_slc=self.sec_slc,
                     pixel_function=self.pixel_function,
                     rel=self.use_relative,
+                    srs=srs or "",
+                    geotransform=gt_str,
                 )
             )
-        io.copy_projection(self.ref_slc, self.path)
         return self
 
     def load(self):
