@@ -257,6 +257,9 @@ class RasterWriter(DatasetWriter, AbstractContextManager["RasterWriter"]):
             kwargs["dtype"] = np.dtype(dtype)
         if driver is not None:
             kwargs["driver"] = driver
+        elif kwargs.get("driver") in (None, "LIBERTIFF"):
+            # Default to GTiff if no driver specified or if source used read-only driver
+            kwargs["driver"] = "GTiff"
         if crs is not None:
             kwargs["crs"] = crs
         if transform is not None:
