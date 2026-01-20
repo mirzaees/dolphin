@@ -106,7 +106,12 @@ def set_nodata_values(
         # Reform to be like a numpy mask
         bad_like = ~(src.read_masks(1).astype(bool))
 
-    with rio.open(filename, "r+") as dst:
+    # Explicitly specify GTiff driver for .tif files to avoid writer lookup failure
+    driver = None
+    suffix = Path(filename).suffix.lower()
+    if suffix in (".tif", ".tiff"):
+        driver = "GTiff"
+    with rio.open(filename, "r+", driver=driver) as dst:
         # We also want to keep the currently-nodata-pixels as nodata,
         # so we combine the `like_filename`'s nodata and this mask
         arr = dst.read(1)

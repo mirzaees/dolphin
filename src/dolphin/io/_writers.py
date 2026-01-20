@@ -331,9 +331,15 @@ class RasterWriter(DatasetWriter, AbstractContextManager["RasterWriter"]):
     def __setitem__(self, key: tuple[Index, ...], value: np.ndarray, /) -> None:
         if np.issubdtype(value.dtype, np.floating) and self.keep_bits is not None:
             round_mantissa(value, keep_bits=self.keep_bits)
+        # Explicitly specify GTiff driver for .tif files to avoid writer lookup failure
+        driver = None
+        suffix = Path(self.filename).suffix.lower()
+        if suffix in (".tif", ".tiff"):
+            driver = "GTiff"
         with rasterio.open(
             self.filename,
             "r+",
+            driver=driver,
         ) as dataset:
             if len(key) == 2:
                 rows, cols = key

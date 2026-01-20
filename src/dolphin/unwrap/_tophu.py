@@ -190,8 +190,13 @@ def multiscale_unwrap(
         # Fill in the nan pixels with the nearest ambiguities
         from ._post_process import interpolate_masked_gaps
 
+        # Explicitly specify GTiff driver for .tif files to avoid writer lookup failure
+        driver = None
+        suffix = Path(unw_filename).suffix.lower()
+        if suffix in (".tif", ".tiff"):
+            driver = "GTiff"
         with (
-            rio.open(unw_filename, mode="r+") as u_src,
+            rio.open(unw_filename, mode="r+", driver=driver) as u_src,
             rio.open(igram_rb.filepath) as i_src,
         ):
             unw = u_src.read(1)
