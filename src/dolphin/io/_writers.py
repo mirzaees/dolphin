@@ -171,8 +171,9 @@ class RasterWriter(DatasetWriter, AbstractContextManager["RasterWriter"]):
     """int : For floating point rasters, the number of mantissa bits to keep."""
 
     def __post_init__(self) -> None:
-        # Open the dataset.
-        self.dataset = rasterio.open(self.filename, mode="r+")
+        # Open the dataset. Explicitly specify GTiff driver to avoid issues with
+        # newer rasterio versions where get_writer_for_path may return None.
+        self.dataset = rasterio.open(self.filename, mode="r+", driver="GTiff")
 
         # Check that `band` is a valid band index in the dataset.
         nbands = self.dataset.count
