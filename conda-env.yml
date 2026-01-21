@@ -5,7 +5,7 @@ dependencies:
   - python>=3.12
   - pip>=21.3  # https://pip.pypa.io/en/stable/reference/build-system/pyproject-toml/#editable-installation
   - git  # for pip install, due to setuptools_scm
-  - gdal>=3.9
+  - gdal>=3.9,<3.11  # GDAL 3.11+ creates Float16 from NBITS=16 which rasterio doesn't support
   - libgdal-netcdf
   - libgdal-hdf5
   - h5py>=3.6
