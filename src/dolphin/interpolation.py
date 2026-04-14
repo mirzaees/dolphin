@@ -19,6 +19,7 @@ def interpolate(
     max_radius: int = 51,
     min_radius: int = 0,
     alpha: float = 0.75,
+    tile_size: int = 1024,
 ) -> np.ndarray:
     """Interpolate a complex interferogram based on pixel weights.
 
@@ -55,8 +56,13 @@ def interpolate(
         max_radius = 0 by default
     alpha : float (optional)
         hyperparameter controlling the weight of PS in interpolation: smaller
-        alpha means more weight is assigned to PS closer to the center pixel.
+        alpha means more weight is assigned to PS closer to the access pixel.
         alpha = 0.75 by default
+    tile_size : int, optional
+        Size of tiles to process at a time to reduce peak memory usage.
+        Each tile is expanded by `max_radius` on all sides for context,
+        then the interior result is written back.
+        Default is 512.
 
     Returns
     -------
@@ -65,33 +71,63 @@ def interpolate(
         wrapped phase at non-ps pixels.
 
     """
-    nrow, ncol = weights.shape
-    ifg_is_valid_mask = ifg != 0
+    ifg = np.asarray(ifg)
+    nrow, ncol = ifg.shape
 
-    weights_float = np.clip(weights.astype(np.float32), 0, 1)
-    # Ensure weights are between 0 and 1
+    # Avoid a copy if weights is already float32 in [0, 1]
+    if weights.dtype == np.float32:
+        weights_float = np.asarray(weights)
+    else:
+        weights_float = np.asarray(weights, dtype=np.float32)
     if np.any(weights_float > 1):
         logger.warning("weights array has values greater than 1. Clipping to 1.")
-    if np.any(weights_float < 0):
+        weights_float = np.clip(weights_float, 0, 1)
+    elif np.any(weights_float < 0):
         logger.warning("weights array has negative values. Clipping to 0.")
-    weights_float = np.clip(weights_float, 0, 1)
-
-    interpolated_ifg = np.zeros((nrow, ncol), dtype=np.complex64)
+        weights_float = np.clip(weights_float, 0, 1)
 
     indices = np.array(
         get_circle_idxs(max_radius, min_radius=min_radius, sort_output=False)
     )
 
-    _interp_loop(
-        ifg,
-        weights_float,
-        weight_cutoff,
-        ifg_is_valid_mask,
-        num_neighbors,
-        alpha,
-        indices,
-        interpolated_ifg,
-    )
+    interpolated_ifg = np.zeros((nrow, ncol), dtype=np.complex64)
+
+    # Process in tiles to bound peak memory. Each tile is padded by max_radius
+    # for context; only the interior (non-padded) result is written to output.
+    for r_start in range(0, nrow, tile_size):
+        for c_start in range(0, ncol, tile_size):
+            r_end = min(r_start + tile_size, nrow)
+            c_end = min(c_start + tile_size, ncol)
+
+            # Padded read extents (clamped to image bounds)
+            r0p = max(r_start - max_radius, 0)
+            c0p = max(c_start - max_radius, 0)
+            r1p = min(r_end + max_radius, nrow)
+            c1p = min(c_end + max_radius, ncol)
+
+            ifg_tile = ifg[r0p:r1p, c0p:c1p]
+            w_tile = weights_float[r0p:r1p, c0p:c1p]
+            valid_tile = ifg_tile != 0
+
+            out_tile = np.zeros(ifg_tile.shape, dtype=np.complex64)
+            _interp_loop(
+                ifg_tile,
+                w_tile,
+                weight_cutoff,
+                valid_tile,
+                num_neighbors,
+                alpha,
+                indices,
+                out_tile,
+            )
+
+            # Write only the interior (non-padded) region back
+            ir0 = r_start - r0p
+            ic0 = c_start - c0p
+            ir1 = ir0 + (r_end - r_start)
+            ic1 = ic0 + (c_end - c_start)
+            interpolated_ifg[r_start:r_end, c_start:c_end] = out_tile[ir0:ir1, ic0:ic1]
+
     return interpolated_ifg
 
 

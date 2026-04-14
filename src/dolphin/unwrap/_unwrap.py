@@ -372,18 +372,24 @@ def unwrap(
             str(pre_interp_unw_filename).split(".")[0] + (name_change + "unw" + suf)
         )
 
-        pre_interp_ifg = io.load_gdal(pre_interp_ifg_filename, masked=True).filled(0)
+        # Reuse already-loaded ifg if Goldstein was not run (avoids double disk read)
+        if pre_interp_ifg_filename == Path(ifg_filename):
+            pre_interp_ifg = ifg.filled(0)
+        else:
+            pre_interp_ifg = io.load_gdal(pre_interp_ifg_filename, masked=True).filled(0)
 
         corr = io.load_gdal(corr_filename, masked=True).filled(0)
         cutoff = preproc_options.interpolation_cor_threshold
         logger.info(f"Masking pixels with correlation below {cutoff}")
         coherent_pixel_mask = corr >= cutoff
+        del corr  # free before interpolation
         if similarity_filename and (
             sim_cutoff := preproc_options.interpolation_similarity_threshold
         ):
             logger.info(f"Masking pixels with similarity below {sim_cutoff}")
             sim = io.load_gdal(similarity_filename, masked=True).filled(0)
             coherent_pixel_mask &= sim >= sim_cutoff
+            del sim  # free before interpolation
 
         logger.info(f"Interpolating {pre_interp_ifg_filename} -> {interp_ifg_filename}")
         modified_ifg = interpolate(
