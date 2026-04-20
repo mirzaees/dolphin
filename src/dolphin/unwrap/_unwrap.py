@@ -382,7 +382,6 @@ def unwrap(
         cutoff = preproc_options.interpolation_cor_threshold
         logger.info(f"Masking pixels with correlation below {cutoff}")
         coherent_pixel_mask = corr >= cutoff
-        del corr  # free before interpolation
         if similarity_filename and (
             sim_cutoff := preproc_options.interpolation_similarity_threshold
         ):
@@ -408,6 +407,7 @@ def unwrap(
                 output_name=masked_corr_filename,
             )
             unwrapper_corr_filename = masked_corr_filename
+        del corr  # free memory after use
 
         logger.info(f"Writing interpolated output to {interp_ifg_filename}")
         io.write_arr(
