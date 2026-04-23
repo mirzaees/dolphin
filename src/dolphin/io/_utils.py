@@ -12,10 +12,46 @@ if TYPE_CHECKING:
 
 __all__ = [
     "get_gtiff_options",
+    "path_exists",
     "repack_raster",
     "repack_rasters",
     "round_mantissa",
 ]
+
+
+def path_exists(path: str | Path) -> bool:
+    """Check if a path exists, handling both local and GDAL VSI paths.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to check. Can be a local path or GDAL VSI path (e.g., /vsis3/...).
+
+    Returns
+    -------
+    bool
+        True if the path exists, False otherwise.
+
+    Examples
+    --------
+    >>> path_exists('/tmp/file.txt')
+    True
+    >>> path_exists('/vsis3/bucket/key/file.h5')
+    True  # If file exists in S3
+
+    """
+    from osgeo import gdal
+
+    path_str = str(path)
+
+    # Check if it's a GDAL Virtual File System path
+    if path_str.startswith('/vsi'):
+        # Use GDAL's VSIStatL for VSI paths
+        stat = gdal.VSIStatL(path_str)
+        return stat is not None
+
+    # Use standard Path.exists() for local paths
+    return Path(path_str).exists()
 
 
 def _ensure_slices(rows: Index, cols: Index) -> tuple[slice, slice]:

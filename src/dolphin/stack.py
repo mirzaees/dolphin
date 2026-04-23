@@ -343,9 +343,9 @@ class CompressedSlcInfo(BaseModel):
     @classmethod
     def from_file_metadata(cls, filename: Filename) -> CompressedSlcInfo:
         """Try to parse the CCSLC metadata from `filename`."""
-        from dolphin.io import get_raster_metadata
+        from dolphin.io import get_raster_metadata, path_exists
 
-        if not Path(filename).exists():
+        if not path_exists(filename):
             raise FileNotFoundError(filename)
 
         domains = ["DOLPHIN", ""]
