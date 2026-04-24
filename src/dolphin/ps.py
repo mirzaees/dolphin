@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -34,6 +35,137 @@ REPACK_OPTIONS = {
 }
 
 
+def _process_single_block(cur_data, rows, cols, amp_dispersion_threshold, min_count):
+    """Process a single block to compute PS, mean, and amplitude dispersion.
+
+    This function is designed to be called in parallel.
+
+    Parameters
+    ----------
+    cur_data : np.ndarray
+        3D array of SLC data for this block (n_slcs, rows, cols)
+    rows : slice
+        Row slice for this block
+    cols : slice
+        Column slice for this block
+    amp_dispersion_threshold : float
+        Threshold for PS detection
+    min_count : int
+        Minimum number of valid pixels
+
+    Returns
+    -------
+    tuple
+        (ps, mean, amp_disp, rows, cols) arrays and slice information
+    """
+    cur_rows, cur_cols = cur_data.shape[-2:]
+
+    if not (np.all(cur_data == 0) or np.all(np.isnan(cur_data))):
+        magnitude_cur = np.abs(cur_data)
+        mean, amp_disp, ps = calc_ps_block(
+            magnitude_cur,
+            amp_dispersion_threshold,
+            min_count=min_count,
+        )
+
+        # Use the UInt8 type for the PS to save.
+        # For invalid pixels, set to max Byte value
+        ps = ps.astype(FILE_DTYPES["ps"])
+        ps[amp_disp == 0] = NODATA_VALUES["ps"]
+    else:
+        # Fill the block with nodata
+        ps = (
+            np.ones((cur_rows, cur_cols), dtype=FILE_DTYPES["ps"])
+            * NODATA_VALUES["ps"]
+        )
+        mean = np.full(
+            (cur_rows, cur_cols),
+            NODATA_VALUES["amp_mean"],
+            dtype=FILE_DTYPES["amp_mean"],
+        )
+        amp_disp = np.full(
+            (cur_rows, cur_cols),
+            NODATA_VALUES["amp_dispersion"],
+            dtype=FILE_DTYPES["amp_dispersion"],
+        )
+
+    return ps, mean, amp_disp, rows, cols
+
+
+def _process_blocks_parallel(
+    block_gen,
+    writer,
+    magnitude,
+    amp_dispersion_threshold,
+    output_file,
+    output_amp_mean_file,
+    output_amp_dispersion_file,
+    num_parallel,
+    tqdm_kwargs,
+):
+    """Process PS blocks in parallel using ThreadPoolExecutor.
+
+    Parameters
+    ----------
+    block_gen : EagerLoader
+        Block generator yielding (data, (rows, cols))
+    writer : BackgroundBlockWriter
+        Writer for output blocks
+    magnitude : np.ndarray
+        Pre-allocated magnitude array (not used in parallel mode)
+    amp_dispersion_threshold : float
+        Threshold for PS detection
+    output_file : Path
+        Output PS file path
+    output_amp_mean_file : Path
+        Output amplitude mean file path
+    output_amp_dispersion_file : Path
+        Output amplitude dispersion file path
+    num_parallel : int
+        Number of parallel workers
+    tqdm_kwargs : dict
+        Arguments for tqdm progress bar
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from tqdm.auto import tqdm
+
+    # Collect all blocks first to know total count
+    logger.info(f"Collecting block metadata for parallel processing with {num_parallel} workers...")
+    blocks = list(block_gen.iter_blocks(**tqdm_kwargs))
+    min_count = len(magnitude)  # Stack size
+
+    logger.info(f"Processing {len(blocks)} blocks in parallel...")
+
+    # Process blocks in parallel
+    with ThreadPoolExecutor(max_workers=num_parallel) as executor:
+        # Submit all blocks
+        future_to_block = {
+            executor.submit(
+                _process_single_block,
+                cur_data,
+                rows,
+                cols,
+                amp_dispersion_threshold,
+                min_count,
+            ): (rows, cols)
+            for cur_data, (rows, cols) in blocks
+        }
+
+        # Collect results with progress bar
+        pbar = tqdm(total=len(blocks), desc="PS blocks", **tqdm_kwargs)
+        for future in as_completed(future_to_block):
+            ps, mean, amp_disp, rows, cols = future.result()
+
+            # Write results
+            writer.queue_write(mean, output_amp_mean_file, rows.start, cols.start)
+            writer.queue_write(amp_disp, output_amp_dispersion_file, rows.start, cols.start)
+            writer.queue_write(ps, output_file, rows.start, cols.start)
+
+            pbar.update(1)
+
+        pbar.close()
+
+
 def create_ps(
     *,
     reader: StackReader,
@@ -47,6 +179,7 @@ def create_ps(
     nodata_mask: Optional[np.ndarray] = None,
     update_existing: bool = False,
     block_shape: tuple[int, int] = (512, 512),
+    num_parallel: int = 1,
     **tqdm_kwargs,
 ):
     """Create the amplitude dispersion, mean, and PS files.
@@ -80,6 +213,10 @@ def create_ps(
     block_shape : tuple[int, int], optional
         The 2D block size to load all bands at a time.
         Default is (512, 512)
+    num_parallel : int, optional
+        Number of blocks to process in parallel. Default is 1 (sequential).
+        Increase to use more CPU cores and reduce runtime. Recommended value is
+        50-75% of available CPU cores.
     **tqdm_kwargs : optional
         Arguments to pass to `tqdm`, (e.g. `position=n` for n parallel bars)
         See https://tqdm.github.io/docs/tqdm/#tqdm-objects for all options.
@@ -118,43 +255,59 @@ def create_ps(
     writer = io.BackgroundBlockWriter()
     # Make the generator for the blocks
     block_gen = EagerLoader(reader, block_shape=block_shape, nodata_mask=nodata_mask)
-    for cur_data, (rows, cols) in block_gen.iter_blocks(**tqdm_kwargs):
-        cur_rows, cur_cols = cur_data.shape[-2:]
 
-        if not (np.all(cur_data == 0) or np.all(np.isnan(cur_data))):
-            magnitude_cur = np.abs(cur_data, out=magnitude[:, :cur_rows, :cur_cols])
-            mean, amp_disp, ps = calc_ps_block(
-                # use min_count == size of stack so that ALL need to be not Nan
-                magnitude_cur,
-                amp_dispersion_threshold,
-                min_count=len(magnitude_cur),
-            )
+    # Use parallel processing if requested
+    if num_parallel > 1:
+        _process_blocks_parallel(
+            block_gen=block_gen,
+            writer=writer,
+            magnitude=magnitude,
+            amp_dispersion_threshold=amp_dispersion_threshold,
+            output_file=output_file,
+            output_amp_mean_file=output_amp_mean_file,
+            output_amp_dispersion_file=output_amp_dispersion_file,
+            num_parallel=num_parallel,
+            tqdm_kwargs=tqdm_kwargs,
+        )
+    else:
+        # Sequential processing (original behavior)
+        for cur_data, (rows, cols) in block_gen.iter_blocks(**tqdm_kwargs):
+            cur_rows, cur_cols = cur_data.shape[-2:]
 
-            # Use the UInt8 type for the PS to save.
-            # For invalid pixels, set to max Byte value
-            ps = ps.astype(FILE_DTYPES["ps"])
-            ps[amp_disp == 0] = NODATA_VALUES["ps"]
-        else:
-            # Fill the block with nodata
-            ps = (
-                np.ones((cur_rows, cur_cols), dtype=FILE_DTYPES["ps"])
-                * NODATA_VALUES["ps"]
-            )
-            mean = np.full(
-                (cur_rows, cur_cols),
-                NODATA_VALUES["amp_mean"],
-                dtype=FILE_DTYPES["amp_mean"],
-            )
-            amp_disp = np.full(
-                (cur_rows, cur_cols),
-                NODATA_VALUES["amp_dispersion"],
-                dtype=FILE_DTYPES["amp_dispersion"],
-            )
+            if not (np.all(cur_data == 0) or np.all(np.isnan(cur_data))):
+                magnitude_cur = np.abs(cur_data, out=magnitude[:, :cur_rows, :cur_cols])
+                mean, amp_disp, ps = calc_ps_block(
+                    # use min_count == size of stack so that ALL need to be not Nan
+                    magnitude_cur,
+                    amp_dispersion_threshold,
+                    min_count=len(magnitude_cur),
+                )
 
-        # Write amp dispersion and the mean blocks
-        writer.queue_write(mean, output_amp_mean_file, rows.start, cols.start)
-        writer.queue_write(amp_disp, output_amp_dispersion_file, rows.start, cols.start)
-        writer.queue_write(ps, output_file, rows.start, cols.start)
+                # Use the UInt8 type for the PS to save.
+                # For invalid pixels, set to max Byte value
+                ps = ps.astype(FILE_DTYPES["ps"])
+                ps[amp_disp == 0] = NODATA_VALUES["ps"]
+            else:
+                # Fill the block with nodata
+                ps = (
+                    np.ones((cur_rows, cur_cols), dtype=FILE_DTYPES["ps"])
+                    * NODATA_VALUES["ps"]
+                )
+                mean = np.full(
+                    (cur_rows, cur_cols),
+                    NODATA_VALUES["amp_mean"],
+                    dtype=FILE_DTYPES["amp_mean"],
+                )
+                amp_disp = np.full(
+                    (cur_rows, cur_cols),
+                    NODATA_VALUES["amp_dispersion"],
+                    dtype=FILE_DTYPES["amp_dispersion"],
+                )
+
+            # Write amp dispersion and the mean blocks
+            writer.queue_write(mean, output_amp_mean_file, rows.start, cols.start)
+            writer.queue_write(amp_disp, output_amp_dispersion_file, rows.start, cols.start)
+            writer.queue_write(ps, output_file, rows.start, cols.start)
 
     logger.info(f"Waiting to write {writer.num_queued} blocks of data.")
     writer.notify_finished()

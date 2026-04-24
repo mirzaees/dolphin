@@ -165,6 +165,7 @@ def run(
             nodata_mask=nodata_mask,
             existing_amp_mean_file=existing_amp,
             block_shape=cfg.worker_settings.block_shape,
+            num_parallel=cfg.worker_settings.n_parallel_bursts,
             **kwargs,
         )
 
