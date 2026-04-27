@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -367,9 +367,49 @@ def run_wrapped_phase_single(
                 )
             pbar.update()
 
-    with Executor(max_workers) as exc:
-        # Consume all blocks from the `.map` call
-        deque(exc.map(_process_block, blocks))
+    # Use a sliding window approach to avoid overwhelming S3 with concurrent requests
+    # when streaming via /vsis3/ paths. This keeps memory usage bounded.
+    if max_workers > 1:
+        with Executor(max_workers) as exc:
+            block_iterator = iter(blocks)
+
+            # Initial batch: submit first max_workers blocks
+            futures = {}
+            for _ in range(max_workers):
+                try:
+                    block = next(block_iterator)
+                    future = exc.submit(_process_block, block)
+                    futures[future] = block
+                except StopIteration:
+                    break
+
+            # Process blocks as they complete, submitting new ones
+            blocks_processed = 0
+            while futures:
+                # Wait for first future to complete
+                done, pending = wait(futures.keys(), return_when=FIRST_COMPLETED)
+
+                for future in done:
+                    future.result()  # Retrieve result to catch any exceptions
+                    blocks_processed += 1
+
+                    if blocks_processed % 100 == 0:
+                        logger.info(f"Processed {blocks_processed} blocks...")
+
+                    # Remove completed future
+                    del futures[future]
+
+                    # Submit new block if available
+                    try:
+                        block = next(block_iterator)
+                        new_future = exc.submit(_process_block, block)
+                        futures[new_future] = block
+                    except StopIteration:
+                        pass  # No more blocks to process
+    else:
+        # Single-threaded: use simple map
+        with Executor(max_workers) as exc:
+            deque(exc.map(_process_block, blocks))
 
     # Block until all the writers for this ministack have finished
     logger.info(f"Waiting to write {writer.num_queued} blocks of data.")
