@@ -126,44 +126,72 @@ def _process_blocks_parallel(
     tqdm_kwargs : dict
         Arguments for tqdm progress bar
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    from tqdm.auto import tqdm
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
-    # Collect all blocks first to know total count
-    logger.info(f"Collecting block metadata for parallel processing with {num_parallel} workers...")
-    blocks = list(block_gen.iter_blocks(**tqdm_kwargs))
+    # Don't load all blocks into memory - process as a stream
+    logger.info(f"Starting parallel processing with {num_parallel} workers...")
     min_count = len(magnitude)  # Stack size
 
-    logger.info(f"Processing {len(blocks)} blocks in parallel...")
-
-    # Process blocks in parallel
+    # Process blocks in parallel using a sliding window approach
+    # This keeps only num_parallel blocks in memory at once
     with ThreadPoolExecutor(max_workers=num_parallel) as executor:
-        # Submit all blocks
-        future_to_block = {
-            executor.submit(
-                _process_single_block,
-                cur_data,
-                rows,
-                cols,
-                amp_dispersion_threshold,
-                min_count,
-            ): (rows, cols)
-            for cur_data, (rows, cols) in blocks
-        }
+        # Use a bounded queue of futures to avoid loading all blocks
+        block_iterator = block_gen.iter_blocks(**tqdm_kwargs)
 
-        # Collect results with progress bar
-        pbar = tqdm(total=len(blocks), desc="PS blocks", **tqdm_kwargs)
-        for future in as_completed(future_to_block):
-            ps, mean, amp_disp, rows, cols = future.result()
+        # Initial batch: submit first num_parallel blocks
+        futures = {}
+        for _ in range(num_parallel):
+            try:
+                cur_data, (rows, cols) = next(block_iterator)
+                future = executor.submit(
+                    _process_single_block,
+                    cur_data,
+                    rows,
+                    cols,
+                    amp_dispersion_threshold,
+                    min_count,
+                )
+                futures[future] = (rows, cols)
+            except StopIteration:
+                break
 
-            # Write results
-            writer.queue_write(mean, output_amp_mean_file, rows.start, cols.start)
-            writer.queue_write(amp_disp, output_amp_dispersion_file, rows.start, cols.start)
-            writer.queue_write(ps, output_file, rows.start, cols.start)
+        # Process blocks as they complete, submitting new ones
+        blocks_processed = 0
+        while futures:
+            # Wait for first future to complete
+            done, pending = wait(futures.keys(), return_when=FIRST_COMPLETED)
 
-            pbar.update(1)
+            for future in done:
+                ps, mean, amp_disp, rows, cols = future.result()
 
-        pbar.close()
+                # Write results
+                writer.queue_write(mean, output_amp_mean_file, rows.start, cols.start)
+                writer.queue_write(amp_disp, output_amp_dispersion_file, rows.start, cols.start)
+                writer.queue_write(ps, output_file, rows.start, cols.start)
+
+                blocks_processed += 1
+                if blocks_processed % 10 == 0:
+                    logger.info(f"Processed {blocks_processed} blocks...")
+
+                # Remove completed future
+                del futures[future]
+
+                # Submit new block if available
+                try:
+                    cur_data, (rows, cols) = next(block_iterator)
+                    new_future = executor.submit(
+                        _process_single_block,
+                        cur_data,
+                        rows,
+                        cols,
+                        amp_dispersion_threshold,
+                        min_count,
+                    )
+                    futures[new_future] = (rows, cols)
+                except StopIteration:
+                    pass  # No more blocks to process
+
+        logger.info(f"Completed processing {blocks_processed} blocks")
 
 
 def create_ps(
