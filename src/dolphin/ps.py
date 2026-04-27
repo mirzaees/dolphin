@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import shutil
 import warnings
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -57,6 +56,7 @@ def _process_single_block(cur_data, rows, cols, amp_dispersion_threshold, min_co
     -------
     tuple
         (ps, mean, amp_disp, rows, cols) arrays and slice information
+
     """
     cur_rows, cur_cols = cur_data.shape[-2:]
 
@@ -75,8 +75,7 @@ def _process_single_block(cur_data, rows, cols, amp_dispersion_threshold, min_co
     else:
         # Fill the block with nodata
         ps = (
-            np.ones((cur_rows, cur_cols), dtype=FILE_DTYPES["ps"])
-            * NODATA_VALUES["ps"]
+            np.ones((cur_rows, cur_cols), dtype=FILE_DTYPES["ps"]) * NODATA_VALUES["ps"]
         )
         mean = np.full(
             (cur_rows, cur_cols),
@@ -125,8 +124,9 @@ def _process_blocks_parallel(
         Number of parallel workers
     tqdm_kwargs : dict
         Arguments for tqdm progress bar
+
     """
-    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
     # Don't load all blocks into memory - process as a stream
     logger.info(f"Starting parallel processing with {num_parallel} workers...")
@@ -159,14 +159,16 @@ def _process_blocks_parallel(
         blocks_processed = 0
         while futures:
             # Wait for first future to complete
-            done, pending = wait(futures.keys(), return_when=FIRST_COMPLETED)
+            done, _pending = wait(futures.keys(), return_when=FIRST_COMPLETED)
 
             for future in done:
                 ps, mean, amp_disp, rows, cols = future.result()
 
                 # Write results
                 writer.queue_write(mean, output_amp_mean_file, rows.start, cols.start)
-                writer.queue_write(amp_disp, output_amp_dispersion_file, rows.start, cols.start)
+                writer.queue_write(
+                    amp_disp, output_amp_dispersion_file, rows.start, cols.start
+                )
                 writer.queue_write(ps, output_file, rows.start, cols.start)
 
                 blocks_processed += 1
@@ -334,7 +336,9 @@ def create_ps(
 
             # Write amp dispersion and the mean blocks
             writer.queue_write(mean, output_amp_mean_file, rows.start, cols.start)
-            writer.queue_write(amp_disp, output_amp_dispersion_file, rows.start, cols.start)
+            writer.queue_write(
+                amp_disp, output_amp_dispersion_file, rows.start, cols.start
+            )
             writer.queue_write(ps, output_file, rows.start, cols.start)
 
     logger.info(f"Waiting to write {writer.num_queued} blocks of data.")

@@ -376,7 +376,9 @@ def unwrap(
         if pre_interp_ifg_filename == Path(ifg_filename):
             pre_interp_ifg = ifg.filled(0)
         else:
-            pre_interp_ifg = io.load_gdal(pre_interp_ifg_filename, masked=True).filled(0)
+            pre_interp_ifg = io.load_gdal(pre_interp_ifg_filename, masked=True).filled(
+                0
+            )
 
         corr = io.load_gdal(corr_filename, masked=True).filled(0)
         cutoff = preproc_options.interpolation_cor_threshold

@@ -34,9 +34,9 @@ def path_exists(path: str | Path) -> bool:
 
     Examples
     --------
-    >>> path_exists('/tmp/file.txt')
+    >>> path_exists('/tmp/file.txt')  # doctest: +SKIP
     True
-    >>> path_exists('/vsis3/bucket/key/file.h5')
+    >>> path_exists('/vsis3/bucket/key/file.h5')  # doctest: +SKIP
     True  # If file exists in S3
 
     """
@@ -45,7 +45,7 @@ def path_exists(path: str | Path) -> bool:
     path_str = str(path)
 
     # Check if it's a GDAL Virtual File System path
-    if path_str.startswith('/vsi'):
+    if path_str.startswith("/vsi"):
         # Use GDAL's VSIStatL for VSI paths
         stat = gdal.VSIStatL(path_str)
         return stat is not None

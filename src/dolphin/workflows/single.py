@@ -387,7 +387,7 @@ def run_wrapped_phase_single(
             blocks_processed = 0
             while futures:
                 # Wait for first future to complete
-                done, pending = wait(futures.keys(), return_when=FIRST_COMPLETED)
+                done, _pending = wait(futures.keys(), return_when=FIRST_COMPLETED)
 
                 for future in done:
                     future.result()  # Retrieve result to catch any exceptions
