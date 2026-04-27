@@ -170,7 +170,7 @@ def _process_blocks_parallel(
                 writer.queue_write(ps, output_file, rows.start, cols.start)
 
                 blocks_processed += 1
-                if blocks_processed % 10 == 0:
+                if blocks_processed % 50 == 0:
                     logger.info(f"Processed {blocks_processed} blocks...")
 
                 # Remove completed future
