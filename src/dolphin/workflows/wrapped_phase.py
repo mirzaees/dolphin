@@ -564,6 +564,36 @@ def _get_mask(
                 buffer_pixels=800,
                 dset_name=subdataset,
             )
+
+        # Downsample the nodata mask if strides are provided
+        if strides is not None and any(s > 1 for s in strides.values()):
+            from dolphin import io
+            from dolphin.ps import _multilook_file_in_blocks
+
+            nodata_mask_downsampled = output_dir / "nodata_mask_downsampled.tif"
+            if not nodata_mask_downsampled.exists():
+                logger.info(f"Downsampling nodata mask with strides {strides}")
+                full_cols, full_rows = io.get_raster_xysize(nodata_mask_file)
+                stride_y, stride_x = strides.get("y", 1), strides.get("x", 1)
+                out_rows, out_cols = full_rows // stride_y, full_cols // stride_x
+                _multilook_file_in_blocks(
+                    input_file=nodata_mask_file,
+                    output_file=nodata_mask_downsampled,
+                    full_rows=full_rows,
+                    full_cols=full_cols,
+                    out_rows=out_rows,
+                    out_cols=out_cols,
+                    stride_y=stride_y,
+                    stride_x=stride_x,
+                    strides=strides,
+                    func_type="nansum",
+                    nodata=0,
+                    out_dtype=bool,
+                    is_bool=True,
+                    block_shape=(512, 512),
+                )
+            nodata_mask_file = nodata_mask_downsampled
+
         mask_files.append(nodata_mask_file)
     except Exception as e:
         logger.warning(f"Could not make nodata mask: {e}")
