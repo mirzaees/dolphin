@@ -135,6 +135,7 @@ def run(
         layover_shadow_mask=layover_shadow_mask,
         cslc_file_list=non_compressed_slcs,
         subdataset=subdataset,
+        strides=cfg.output_options.strides.model_dump(),
     )
 
     nodata_mask = masking.load_mask_as_numpy(mask_filename) if mask_filename else None
@@ -548,17 +549,21 @@ def _get_mask(
     layover_shadow_mask: Filename | None,
     cslc_file_list: Sequence[Filename],
     subdataset: str | None = None,
+    strides: dict[str, int] | None = None,
 ) -> Path | None:
     # Make the nodata mask from the polygons, if we're using OPERA CSLCs
     mask_files: list[Path] = []
     try:
         nodata_mask_file = output_dir / "nodata_mask.tif"
-        make_nodata_mask(
-            opera_file_list=cslc_file_list,
-            out_file=nodata_mask_file,
-            buffer_pixels=800,
-            dset_name=subdataset,
-        )
+        if nodata_mask_file.exists():
+            logger.info(f"Using existing nodata mask: {nodata_mask_file}")
+        else:
+            make_nodata_mask(
+                opera_file_list=cslc_file_list,
+                out_file=nodata_mask_file,
+                buffer_pixels=800,
+                dset_name=subdataset,
+            )
         mask_files.append(nodata_mask_file)
     except Exception as e:
         logger.warning(f"Could not make nodata mask: {e}")
@@ -570,13 +575,17 @@ def _get_mask(
             raise ValueError("Must supply output_bounds_epsg for bounds")
         # Make a mask just from the bounds
         bounds_mask_filename = output_dir / "bounds_mask.tif"
-        masking.create_bounds_mask(
-            bounds=output_bounds,
-            bounds_wkt=output_bounds_wkt,
-            bounds_epsg=output_bounds_epsg,
-            output_filename=bounds_mask_filename,
-            like_filename=like_filename,
-        )
+        if bounds_mask_filename.exists():
+            logger.info(f"Using existing bounds mask: {bounds_mask_filename}")
+        else:
+            masking.create_bounds_mask(
+                bounds=output_bounds,
+                bounds_wkt=output_bounds_wkt,
+                bounds_epsg=output_bounds_epsg,
+                output_filename=bounds_mask_filename,
+                like_filename=like_filename,
+                strides=strides,
+            )
         mask_files.append(bounds_mask_filename)
 
     if layover_shadow_mask is not None:
