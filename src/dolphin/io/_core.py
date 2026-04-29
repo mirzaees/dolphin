@@ -282,7 +282,12 @@ def format_nc_filename(filename: Filename, ds_name: Optional[str] = None) -> str
         msg = "Must provide dataset name for HDF5/NetCDF files"
         raise ValueError(msg)
 
-    return f'NETCDF:"{filename}":"//{ds_name.lstrip("/")}"'
+    # Don't quote VSI paths - GDAL needs them unquoted
+    filename_str = fspath(filename)
+    if filename_str.startswith("/vsi"):
+        return f'NETCDF:{filename_str}://{ds_name.lstrip("/")}'
+    else:
+        return f'NETCDF:"{filename}":"//{ds_name.lstrip("/")}"'
 
 
 def copy_projection(src_file: Filename, dst_file: Filename) -> None:
