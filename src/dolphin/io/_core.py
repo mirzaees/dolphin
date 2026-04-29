@@ -282,12 +282,15 @@ def format_nc_filename(filename: Filename, ds_name: Optional[str] = None) -> str
         msg = "Must provide dataset name for HDF5/NetCDF files"
         raise ValueError(msg)
 
-    # Don't quote VSI paths - GDAL needs them unquoted
+    # Determine driver based on file extension
     filename_str = fspath(filename)
+    driver = "HDF5" if filename_str.endswith(".h5") else "NETCDF"
+
+    # Don't quote VSI paths - GDAL needs them unquoted
     if filename_str.startswith("/vsi"):
-        return f'NETCDF:{filename_str}://{ds_name.lstrip("/")}'
+        return f'{driver}:{filename_str}://{ds_name.lstrip("/")}'
     else:
-        return f'NETCDF:"{filename}":"//{ds_name.lstrip("/")}"'
+        return f'{driver}:"{filename}":"//{ds_name.lstrip("/")}"'
 
 
 def copy_projection(src_file: Filename, dst_file: Filename) -> None:
