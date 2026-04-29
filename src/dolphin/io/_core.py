@@ -138,8 +138,19 @@ DEFAULT_HDF5_OPTIONS = {
 def _get_gdal_ds(filename: Filename, update: bool = False) -> gdal.Dataset:
     mode = gdal.GA_Update if update else gdal.GA_ReadOnly
     if str(filename).startswith("s3://"):
-        return gdal.Open(S3Path(str(filename)).to_gdal(), mode)
-    return gdal.Open(fspath(filename))
+        gdal_path = S3Path(str(filename)).to_gdal()
+        logger.debug(f"_get_gdal_ds: Opening s3:// -> {gdal_path}")
+        ds = gdal.Open(gdal_path, mode)
+    else:
+        gdal_path = fspath(filename)
+        logger.debug(f"_get_gdal_ds: Opening {gdal_path}")
+        ds = gdal.Open(gdal_path, mode)
+
+    if ds is None:
+        logger.error(f"_get_gdal_ds: FAILED to open {gdal_path}")
+    else:
+        logger.debug(f"_get_gdal_ds: SUCCESS - size {ds.RasterXSize}x{ds.RasterYSize}")
+    return ds
 
 
 def load_gdal(
@@ -235,6 +246,12 @@ def load_gdal(
         bnd = ds.GetRasterBand(band)
         bnd.ReadAsArray(xoff, yoff, xsize, ysize, buf_obj=out, resample_alg=resamp)
 
+    logger.debug(
+        f"load_gdal: {filename} shape={out.shape} dtype={out.dtype} "
+        f"min={np.nanmin(np.abs(out)):.3e} max={np.nanmax(np.abs(out)):.3e} "
+        f"mean={np.nanmean(np.abs(out)):.3e}"
+    )
+
     if not masked:
         return out
     # Get the nodata value
@@ -288,9 +305,12 @@ def format_nc_filename(filename: Filename, ds_name: Optional[str] = None) -> str
 
     # Don't quote VSI paths - GDAL needs them unquoted
     if filename_str.startswith("/vsi"):
-        return f'{driver}:{filename_str}://{ds_name.lstrip("/")}'
+        result = f'{driver}:{filename_str}://{ds_name.lstrip("/")}'
     else:
-        return f'{driver}:"{filename}":"//{ds_name.lstrip("/")}"'
+        result = f'{driver}:"{filename}":"//{ds_name.lstrip("/")}"'
+
+    logger.debug(f"format_nc_filename: {filename} -> {result}")
+    return result
 
 
 def copy_projection(src_file: Filename, dst_file: Filename) -> None:
