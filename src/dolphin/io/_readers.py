@@ -881,9 +881,11 @@ class VRTStack(StackReader):
         out = []
         for f in self.file_list:
             if isinstance(f, S3Path):
-                out.append(f.to_gdal())
+                gdal_str = f.to_gdal()
             else:
-                out.append(io.format_nc_filename(f, self.subdataset))
+                gdal_str = io.format_nc_filename(f, self.subdataset)
+            out.append(gdal_str)
+            logger.debug(f"VRT will reference: {gdal_str}")
         return out
 
     def __fspath__(self):

@@ -246,10 +246,16 @@ def load_gdal(
         bnd = ds.GetRasterBand(band)
         bnd.ReadAsArray(xoff, yoff, xsize, ysize, buf_obj=out, resample_alg=resamp)
 
+    min_val = np.nanmin(np.abs(out)) if out.size > 0 else np.nan
+    max_val = np.nanmax(np.abs(out)) if out.size > 0 else np.nan
+    mean_val = np.nanmean(np.abs(out)) if out.size > 0 else np.nan
+    all_nan = np.all(np.isnan(out))
+    all_zero = np.all(out == 0) if not all_nan else False
+
     logger.debug(
         f"load_gdal: {filename} shape={out.shape} dtype={out.dtype} "
-        f"min={np.nanmin(np.abs(out)):.3e} max={np.nanmax(np.abs(out)):.3e} "
-        f"mean={np.nanmean(np.abs(out)):.3e}"
+        f"min={min_val:.3e} max={max_val:.3e} mean={mean_val:.3e} "
+        f"all_nan={all_nan} all_zero={all_zero}"
     )
 
     if not masked:
