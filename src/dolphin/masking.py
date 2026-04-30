@@ -261,9 +261,10 @@ def create_bounds_mask(
     like_filename: PathOrStr,
     bounds_epsg: int = 4326,
     overwrite: bool = False,
-    strides: dict[str, int] | None = None,
 ) -> None:
     """Create a boolean raster mask where 1 is inside the given bounds and 0 is outside.
+
+    Masks are always created at full resolution matching the reference file.
 
     Parameters
     ----------
@@ -281,10 +282,6 @@ def create_bounds_mask(
         Default is 4326 (lat/lon coordinates for the bounds).
     overwrite : bool, optional
         Overwrite the output file if it already exists, by default False
-    strides : dict, optional
-        Downsampling strides (e.g., {"x": 2, "y": 2}) to create mask at
-        lower resolution. If provided, creates mask matching downsampled
-        output resolution. Default is None.
 
     Raises
     ------
@@ -321,49 +318,14 @@ def create_bounds_mask(
 
     logger.info(f"Creating mask for bounds {bounds_poly_lonlat}")
 
-    # Create the output raster
-    # If strides provided, create at downsampled resolution
-    if strides is not None:
-        x_stride = strides.get("x", 1)
-        y_stride = strides.get("y", 1)
-
-        # Open reference to get dimensions and geotransform
-        ref_ds = gdal.Open(str(like_filename), gdal.GA_ReadOnly)
-        orig_cols = ref_ds.RasterXSize
-        orig_rows = ref_ds.RasterYSize
-        orig_gt = ref_ds.GetGeoTransform()
-        ref_ds = None
-
-        # Downsample dimensions and geotransform
-        new_cols = orig_cols // x_stride
-        new_rows = orig_rows // y_stride
-        # Modify pixel size in geotransform
-        new_gt = list(orig_gt)
-        new_gt[1] *= x_stride  # x pixel size
-        new_gt[5] *= y_stride  # y pixel size (negative)
-
-        logger.info(
-            f"Creating downsampled mask: {new_rows}x{new_cols} "
-            f"(strides: x={x_stride}, y={y_stride})"
-        )
-
-        io.write_arr(
-            arr=None,
-            output_name=output_filename,
-            dtype=bool,
-            nbands=1,
-            like_filename=like_filename,
-            shape=(new_rows, new_cols),
-            geotransform=new_gt,
-        )
-    else:
-        io.write_arr(
-            arr=None,
-            output_name=output_filename,
-            dtype=bool,
-            nbands=1,
-            like_filename=like_filename,
-        )
+    # Create the output raster at full resolution
+    io.write_arr(
+        arr=None,
+        output_name=output_filename,
+        dtype=bool,
+        nbands=1,
+        like_filename=like_filename,
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_vector_file = Path(tmpdir) / "temp.geojson"

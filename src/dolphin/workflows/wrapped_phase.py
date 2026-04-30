@@ -585,7 +585,6 @@ def _get_mask(
                 bounds_epsg=output_bounds_epsg,
                 output_filename=bounds_mask_filename,
                 like_filename=like_filename,
-                strides=None,  # Keep mask at full resolution
             )
         mask_files.append(bounds_mask_filename)
 
