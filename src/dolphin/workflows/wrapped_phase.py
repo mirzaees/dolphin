@@ -135,7 +135,6 @@ def run(
         layover_shadow_mask=layover_shadow_mask,
         cslc_file_list=non_compressed_slcs,
         subdataset=subdataset,
-        strides=cfg.output_options.strides.model_dump(),
     )
 
     nodata_mask = masking.load_mask_as_numpy(mask_filename) if mask_filename else None
@@ -549,7 +548,6 @@ def _get_mask(
     layover_shadow_mask: Filename | None,
     cslc_file_list: Sequence[Filename],
     subdataset: str | None = None,
-    strides: dict[str, int] | None = None,
 ) -> Path | None:
     # Make the nodata mask from the polygons, if we're using OPERA CSLCs
     mask_files: list[Path] = []

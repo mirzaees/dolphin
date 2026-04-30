@@ -292,7 +292,6 @@ def create_ps(
 
     writer = io.BackgroundBlockWriter()
     # Make the generator for the blocks
-    import pdb;
     block_gen = EagerLoader(reader, block_shape=block_shape, nodata_mask=nodata_mask)
 
     # Use parallel processing if requested
