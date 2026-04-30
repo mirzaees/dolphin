@@ -299,15 +299,16 @@ def format_nc_filename(filename: Filename, ds_name: Optional[str] = None) -> str
         msg = "Must provide dataset name for HDF5/NetCDF files"
         raise ValueError(msg)
 
-    # Determine driver based on file extension
+    # NISAR GSLC files are NetCDF4 format (uses HDF5 container but needs NETCDF driver)
+    # OPERA CSLC-S1 files also use NETCDF driver
+    # Always use NETCDF driver for .h5 and .nc files
     filename_str = fspath(filename)
-    driver = "HDF5" if filename_str.endswith(".h5") else "NETCDF"
 
     # Don't quote VSI paths - GDAL needs them unquoted
     if filename_str.startswith("/vsi"):
-        result = f'{driver}:{filename_str}://{ds_name.lstrip("/")}'
+        result = f'NETCDF:{filename_str}://{ds_name.lstrip("/")}'
     else:
-        result = f'{driver}:"{filename}":"//{ds_name.lstrip("/")}"'
+        result = f'NETCDF:"{filename}":"//{ds_name.lstrip("/")}"'
 
     logger.debug(f"format_nc_filename: {filename} -> {result}")
     return result
