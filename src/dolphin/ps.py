@@ -62,11 +62,11 @@ def _process_single_block(cur_data, rows, cols, amp_dispersion_threshold, min_co
 
     is_all_zero = np.all(cur_data == 0)
     is_all_nan = np.all(np.isnan(cur_data))
-    logger.debug(
-        f"_process_block: shape={cur_data.shape} all_zero={is_all_zero} "
-        f"all_nan={is_all_nan} min={np.nanmin(np.abs(cur_data)):.3e} "
-        f"max={np.nanmax(np.abs(cur_data)):.3e}"
-    )
+    # logger.debug(
+    #     f"_process_block: shape={cur_data.shape} all_zero={is_all_zero} "
+    #     f"all_nan={is_all_nan} min={np.nanmin(np.abs(cur_data)):.3e} "
+    #     f"max={np.nanmax(np.abs(cur_data)):.3e}"
+    # )
 
     if not (is_all_zero or is_all_nan):
         magnitude_cur = np.abs(cur_data)

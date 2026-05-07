@@ -17,6 +17,13 @@ from dolphin.workflows import UnwrapMethod
 from . import InterferogramNetwork, sequential
 from .config import DisplacementWorkflow
 
+
+def _cap_block_shape(
+    shape: tuple[int, int], cap: int
+) -> tuple[int, int]:
+    """Cap each dimension of a (rows, cols) block shape at `cap`."""
+    return (min(shape[0], cap), min(shape[1], cap))
+
 logger = logging.getLogger("dolphin")
 
 
@@ -108,10 +115,15 @@ def run(
     # Make a VRT pointing to the input SLC files
     # #############################################
     subdataset = cfg.input_options.subdataset
+    # Skip per-file xysize check when streaming from /vsis3/: each check opens
+    # the HDF5 subdataset and does a ranged GET. Inputs in this workflow are
+    # already validated to share the same frame/frequency/polarization.
+    streaming = any(str(f).startswith("/vsi") for f in input_file_list)
     vrt_stack = VRTStack(
         input_file_list,
         subdataset=subdataset,
         outfile=cfg.work_directory / "slc_stack.vrt",
+        skip_size_check=streaming,
     )
 
     # Mark any files beginning with "compressed" as compressed
@@ -252,7 +264,10 @@ def run(
             cslc_date_fmt=cfg.input_options.cslc_date_fmt,
             write_crlb=cfg.phase_linking.write_crlb,
             write_closure_phase=cfg.phase_linking.write_closure_phase,
-            block_shape=cfg.worker_settings.block_shape,
+            # Phase linking allocates NxN covariances per pixel; cap the block
+            # shape here to avoid OOM with large stacks while leaving the PS
+            # step and any other callers on the config-specified size.
+            block_shape=_cap_block_shape(cfg.worker_settings.block_shape, 1024),
             max_workers=max_workers,
             **kwargs,
         )

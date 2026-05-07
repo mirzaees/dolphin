@@ -22,7 +22,7 @@ import rasterio as rio
 import rasterio.windows
 from numpy.typing import ArrayLike
 from opera_utils import get_dates, sort_files_by_date
-from osgeo import gdal
+from osgeo import gdal, osr
 from tqdm.auto import trange
 
 from dolphin import io, utils
@@ -815,10 +815,37 @@ class VRTStack(StackReader):
         # Should be CFloat32
         self.gdal_dtype = gdal.GetDataTypeName(bnd1.DataType)
         # Save these for setting at the end
-        self.gt = ds.GetGeoTransform()
-        self.proj = ds.GetProjection()
-        self.srs = ds.GetSpatialRef()
+        try:
+            self.gt = ds.GetGeoTransform()
+        except RuntimeError:
+            self.gt = None
+        try:
+            self.proj = ds.GetProjection()
+        except RuntimeError:
+            self.proj = ""
+        try:
+            self.srs = ds.GetSpatialRef()
+        except RuntimeError:
+            self.srs = None
         ds = bnd1 = None
+
+        # NISAR GSLCs opened via the HDF5 driver don't expose SRS/geotransform;
+        # recover them via the multidim API so the VRT carries correct georef.
+        from dolphin.io._core import _IDENTITY_GT, _read_nisar_geoinfo
+
+        gt_missing = self.gt is None or tuple(self.gt) == _IDENTITY_GT
+        proj_missing = not self.proj
+        if gt_missing or proj_missing:
+            info = _read_nisar_geoinfo(self._gdal_file_strings[0])
+            if info is not None:
+                gt_fallback, wkt_fallback = info
+                if gt_missing:
+                    self.gt = gt_fallback
+                if proj_missing:
+                    self.proj = wkt_fallback
+                    srs = osr.SpatialReference()
+                    if srs.ImportFromWkt(wkt_fallback) == 0:
+                        self.srs = srs
         # Save the subset info
 
         self.xoff, self.yoff = 0, 0

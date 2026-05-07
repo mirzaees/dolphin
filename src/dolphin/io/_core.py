@@ -6,6 +6,7 @@ wrapper functions to write/iterate over blocks of large raster files.
 
 from __future__ import annotations
 
+import functools
 import logging
 import math
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from typing import Any, Mapping, Optional, Sequence, Union
 import h5py
 import numpy as np
 from numpy.typing import ArrayLike, DTypeLike, NDArray
-from osgeo import gdal
+from osgeo import gdal, osr
 from pyproj import CRS
 
 from dolphin._types import Bbox, Filename, Strides
@@ -135,15 +136,185 @@ DEFAULT_HDF5_OPTIONS = {
 }
 
 
+_NISAR_GSLC_GRIDS = ("science", "LSAR", "GSLC", "grids")
+_IDENTITY_GT = (0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def _parse_hdf5_subdataset(gdal_str: str) -> tuple[str, Optional[str]]:
+    s = fspath(gdal_str)
+    if not s.startswith('HDF5:"'):
+        return s, None
+    rest = s[len('HDF5:"') :]
+    end = rest.find('":')
+    if end < 0:
+        return s, None
+    return rest[:end], rest[end + 2 :]
+
+
+def _read_nisar_geoinfo(
+    filename: Filename,
+) -> Optional[tuple[tuple[float, ...], str]]:
+    """Read (geotransform, WKT) from a NISAR GSLC via GDAL's multidim API.
+
+    The HDF5 driver doesn't synthesize a geotransform for NISAR GSLCs — the
+    x/y coordinate arrays and EPSG code live in sibling MDArrays that only the
+    multidimensional raster API exposes. Works over /vsis3 with range reads.
+    Results are cached by (path, subdataset) so multiple callers for the same
+    file only pay one round trip.
+    """
+    path, subdataset = _parse_hdf5_subdataset(filename)
+    return _read_nisar_geoinfo_cached(path, subdataset)
+
+
+@functools.lru_cache(maxsize=256)
+def _read_nisar_geoinfo_cached(
+    path: str, subdataset: Optional[str]
+) -> Optional[tuple[tuple[float, ...], str]]:
+    freq = "A"
+    if subdataset and "/frequency" in subdataset:
+        after = subdataset.split("/frequency", 1)[1]
+        if after and after[0] in ("A", "B"):
+            freq = after[0]
+
+    ds = rg = grp = None
+    try:
+        ds = gdal.OpenEx(path, gdal.OF_MULTIDIM_RASTER)
+        if ds is None:
+            return None
+        rg = ds.GetRootGroup()
+        grp = rg
+        for name in _NISAR_GSLC_GRIDS:
+            grp = grp.OpenGroup(name)
+            if grp is None:
+                return None
+        grp = grp.OpenGroup(f"frequency{freq}")
+        if grp is None:
+            return None
+
+        f64 = gdal.ExtendedDataType.Create(gdal.GDT_Float64)
+        x = grp.OpenMDArray("xCoordinates").ReadAsArray(buffer_datatype=f64)
+        y = grp.OpenMDArray("yCoordinates").ReadAsArray(buffer_datatype=f64)
+        wkt = _read_nisar_projection_wkt(grp.OpenMDArray("projection"))
+    except Exception as e:
+        logger.debug(f"_read_nisar_geoinfo failed for {path}: {e}")
+        return None
+    finally:
+        grp = rg = ds = None
+
+    if x is None or y is None or x.size < 2 or y.size < 2:
+        return None
+
+    dx = float(x[1] - x[0])
+    dy = float(y[1] - y[0])
+    gt = (float(x[0]), dx, 0.0, float(y[0]), 0.0, dy)
+
+    if not wkt:
+        return None
+    return gt, wkt
+
+
+def _read_nisar_projection_wkt(proj_ar) -> str:
+    """Get the full WKT for a NISAR `projection` MDArray.
+
+    The MDArray value itself is the uint32 EPSG code. The full WKT is stored
+    in the `spatial_ref` attribute (preferred — producer-provided). Fall back
+    to building WKT from `epsg_code` if `spatial_ref` isn't present.
+    """
+    try:
+        spatial_ref = proj_ar.GetAttribute("spatial_ref")
+        if spatial_ref is not None:
+            wkt = _coerce_wkt(spatial_ref.Read())
+            if wkt:
+                return wkt
+    except Exception:
+        pass
+    for attr_name in ("epsg_code",):
+        try:
+            a = proj_ar.GetAttribute(attr_name)
+            if a is None:
+                continue
+            val = a.Read()
+        except Exception:
+            continue
+        try:
+            epsg = int(val if not isinstance(val, (list, tuple)) else val[0])
+        except (TypeError, ValueError):
+            continue
+        srs = osr.SpatialReference()
+        if srs.ImportFromEPSG(epsg) == 0:
+            return srs.ExportToWkt()
+    try:
+        arr = proj_ar.ReadAsArray()
+        if arr is not None and arr.size == 1:
+            epsg = int(arr.item())
+            srs = osr.SpatialReference()
+            if srs.ImportFromEPSG(epsg) == 0:
+                return srs.ExportToWkt()
+    except Exception:
+        pass
+    return ""
+
+
+_WKT_PREFIXES = ("PROJCS", "GEOGCS", "PROJCRS", "GEOGCRS", "COMPD_CS", "LOCAL_CS")
+
+
+def _coerce_wkt(raw) -> str:
+    """Coerce whatever GDAL's multidim Read() returns into a WKT string.
+
+    Accepts str / bytes / bytearray / nested lists / tuples / numpy object
+    arrays; returns "" if no WKT-looking value is found.
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        s = raw.strip().strip("\x00").strip()
+        return s if s.upper().startswith(_WKT_PREFIXES) else ""
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            return _coerce_wkt(bytes(raw).decode("utf-8", errors="replace"))
+        except Exception:
+            return ""
+    if isinstance(raw, np.ndarray):
+        for item in raw.ravel():
+            got = _coerce_wkt(item)
+            if got:
+                return got
+        return ""
+    if isinstance(raw, (list, tuple)):
+        for item in raw:
+            got = _coerce_wkt(item)
+            if got:
+                return got
+        return ""
+    return ""
+
+
+def wkt_to_epsg(wkt: str) -> Optional[int]:
+    """Return the EPSG code embedded in a WKT string, or None if unavailable."""
+    if not wkt:
+        return None
+    srs = osr.SpatialReference()
+    if srs.ImportFromWkt(wkt) != 0:
+        return None
+    srs.AutoIdentifyEPSG()
+    code = srs.GetAuthorityCode(None)
+    if code is None:
+        return None
+    try:
+        return int(code)
+    except (TypeError, ValueError):
+        return None
+
+
 def _get_gdal_ds(filename: Filename, update: bool = False) -> gdal.Dataset:
     mode = gdal.GA_Update if update else gdal.GA_ReadOnly
     if str(filename).startswith("s3://"):
         gdal_path = S3Path(str(filename)).to_gdal()
-        logger.debug(f"_get_gdal_ds: Opening s3:// -> {gdal_path}")
+        # logger.debug(f"_get_gdal_ds: Opening s3:// -> {gdal_path}")
         ds = gdal.Open(gdal_path, mode)
     else:
         gdal_path = fspath(filename)
-        logger.debug(f"_get_gdal_ds: Opening {gdal_path}")
+        # logger.debug(f"_get_gdal_ds: Opening {gdal_path}")
         ds = gdal.Open(gdal_path, mode)
 
     if ds is None:
@@ -246,17 +417,17 @@ def load_gdal(
         bnd = ds.GetRasterBand(band)
         bnd.ReadAsArray(xoff, yoff, xsize, ysize, buf_obj=out, resample_alg=resamp)
 
-    min_val = np.nanmin(np.abs(out)) if out.size > 0 else np.nan
-    max_val = np.nanmax(np.abs(out)) if out.size > 0 else np.nan
-    mean_val = np.nanmean(np.abs(out)) if out.size > 0 else np.nan
-    all_nan = np.all(np.isnan(out))
-    all_zero = np.all(out == 0) if not all_nan else False
+    # min_val = np.nanmin(np.abs(out)) if out.size > 0 else np.nan
+    # max_val = np.nanmax(np.abs(out)) if out.size > 0 else np.nan
+    # mean_val = np.nanmean(np.abs(out)) if out.size > 0 else np.nan
+    # all_nan = np.all(np.isnan(out))
+    # all_zero = np.all(out == 0) if not all_nan else False
 
-    logger.debug(
-        f"load_gdal: {filename} shape={out.shape} dtype={out.dtype} "
-        f"min={min_val:.3e} max={max_val:.3e} mean={mean_val:.3e} "
-        f"all_nan={all_nan} all_zero={all_zero}"
-    )
+    # logger.debug(
+    #     f"load_gdal: {filename} shape={out.shape} dtype={out.dtype} "
+    #     f"min={min_val:.3e} max={max_val:.3e} mean={mean_val:.3e} "
+    #     f"all_nan={all_nan} all_zero={all_zero}"
+    # )
 
     if not masked:
         return out
@@ -305,16 +476,12 @@ def format_nc_filename(filename: Filename, ds_name: Optional[str] = None) -> str
         msg = "Must provide dataset name for HDF5/NetCDF files"
         raise ValueError(msg)
 
-    # NISAR GSLC files are NetCDF4 format (uses HDF5 container but needs NETCDF driver)
-    # OPERA CSLC-S1 files also use NETCDF driver
-    # Always use NETCDF driver for .h5 and .nc files
+    # Use the HDF5 driver: it supports partial/range reads over /vsis3, while the
+    # NETCDF driver downloads the whole file. Matches the quoting used in
+    # opera_utils._cslc so S3-hosted NISAR GSLCs open cloud-optimized.
     filename_str = fspath(filename)
 
-    # Don't quote VSI paths - GDAL needs them unquoted
-    if filename_str.startswith("/vsi"):
-        result = f'NETCDF:{filename_str}://{ds_name.lstrip("/")}'
-    else:
-        result = f'NETCDF:"{filename}":"//{ds_name.lstrip("/")}"'
+    result = f'HDF5:"{filename_str}"://{ds_name.lstrip("/")}'
 
     logger.debug(f"format_nc_filename: {filename} -> {result}")
     return result
@@ -323,12 +490,28 @@ def format_nc_filename(filename: Filename, ds_name: Optional[str] = None) -> str
 def copy_projection(src_file: Filename, dst_file: Filename) -> None:
     """Copy projection/geotransform from `src_file` to `dst_file`."""
     ds_src = _get_gdal_ds(src_file)
-    projection = ds_src.GetProjection()
-    geotransform = ds_src.GetGeoTransform()
+    try:
+        projection = ds_src.GetProjection()
+    except RuntimeError:
+        projection = ""
+    try:
+        geotransform = ds_src.GetGeoTransform()
+        if tuple(geotransform) == _IDENTITY_GT:
+            geotransform = None
+    except RuntimeError:
+        geotransform = None
     nodata = ds_src.GetRasterBand(1).GetNoDataValue()
 
-    if projection is None and geotransform is None:
-        logger.info("No projection or geotransform found on file %s", input)
+    if not projection or geotransform is None:
+        info = _read_nisar_geoinfo(src_file)
+        if info is not None:
+            if geotransform is None:
+                geotransform = list(info[0])
+            if not projection:
+                projection = info[1]
+
+    if not projection and geotransform is None:
+        logger.info("No projection or geotransform found on file %s", src_file)
         return
     ds_dst = gdal.Open(fspath(dst_file), gdal.GA_Update)
 
@@ -410,7 +593,15 @@ def get_raster_crs(filename: Filename) -> CRS:
 
     """
     ds = _get_gdal_ds(filename)
-    return CRS.from_wkt(ds.GetProjection())
+    try:
+        wkt = ds.GetProjection()
+    except RuntimeError:
+        wkt = ""
+    if not wkt:
+        info = _read_nisar_geoinfo(filename)
+        if info is not None:
+            return CRS.from_wkt(info[1])
+    return CRS.from_wkt(wkt)
 
 
 def get_raster_gt(filename: Filename) -> list[float]:
@@ -428,7 +619,20 @@ def get_raster_gt(filename: Filename) -> list[float]:
 
     """
     ds = _get_gdal_ds(filename)
-    return ds.GetGeoTransform()
+    try:
+        gt = ds.GetGeoTransform()
+        needs_fallback = tuple(gt) == _IDENTITY_GT
+    except RuntimeError:
+        gt = None
+        needs_fallback = True
+    if needs_fallback:
+        info = _read_nisar_geoinfo(filename)
+        if info is not None:
+            return list(info[0])
+    if gt is None:
+        msg = f"Could not read geotransform from {filename}"
+        raise RuntimeError(msg)
+    return gt
 
 
 def get_raster_dtype(filename: Filename) -> np.dtype:
@@ -765,7 +969,7 @@ def write_arr(
         if arr.ndim == 2:
             arr = arr[np.newaxis, ...]
         for i in range(fi.nbands):
-            logger.debug(f"Writing band {i + 1}/{fi.nbands}")
+            # logger.debug(f"Writing band {i + 1}/{fi.nbands}")
             bnd = ds_out.GetRasterBand(i + 1)
             bnd.WriteArray(arr[i])
 
@@ -954,14 +1158,32 @@ class FileInfo:
 
         # If not provided, attempt to get projection/geotransform from like_filename
         if projection is None and ds_like is not None:
-            projection = ds_like.GetProjection()
+            try:
+                projection = ds_like.GetProjection()
+            except RuntimeError:
+                projection = ""
         if geotransform is None and ds_like is not None:
-            geotransform = ds_like.GetGeoTransform()
-            # If we're using strides, adjust the geotransform
-            if strides is not None:
-                geotransform = list(geotransform)
-                geotransform[1] *= strides["x"]
-                geotransform[5] *= strides["y"]
+            try:
+                geotransform = ds_like.GetGeoTransform()
+                if tuple(geotransform) == _IDENTITY_GT:
+                    geotransform = None
+            except RuntimeError:
+                geotransform = None
+
+        # NISAR GSLCs opened via the HDF5 driver have no projection/geotransform;
+        # fall back to the multidim API to recover them from xCoordinates etc.
+        if like_filename is not None and (not projection or geotransform is None):
+            info = _read_nisar_geoinfo(like_filename)
+            if info is not None:
+                if geotransform is None:
+                    geotransform = list(info[0])
+                if not projection:
+                    projection = info[1]
+
+        if geotransform is not None and strides is not None:
+            geotransform = list(geotransform)
+            geotransform[1] *= strides["x"]
+            geotransform[5] *= strides["y"]
 
         return cls(
             nbands=nbands,
