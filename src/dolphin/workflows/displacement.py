@@ -96,20 +96,29 @@ def run(
         # Otherwise, we have SLC files which are not OPERA burst files
         grouped_slc_files = {"phase_linking": cfg.cslc_file_list}
 
-    if cfg.amplitude_dispersion_files:
-        grouped_amp_dispersion_files = group_by_burst(cfg.amplitude_dispersion_files)
-    else:
-        grouped_amp_dispersion_files = defaultdict(list)
-    if cfg.amplitude_mean_files:
-        grouped_amp_mean_files = group_by_burst(cfg.amplitude_mean_files)
-    else:
-        grouped_amp_mean_files = defaultdict(list)
-    if cfg.layover_shadow_mask_files:
-        grouped_layover_shadow_mask_files = group_by_burst(
-            cfg.layover_shadow_mask_files
-        )
-    else:
-        grouped_layover_shadow_mask_files = defaultdict(list)
+    # NISAR (and other non-S1) inputs have no burst id; use the same
+    # "phase_linking" fallback key used for `cslc_file_list` above so that
+    # ancillary file lists group under the same key as the CSLCs.
+    def _group_or_fallback(files, burst_key):
+        if not files:
+            return defaultdict(list)
+        try:
+            return group_by_burst(files)
+        except ValueError as e:
+            if "Could not parse burst id" not in str(e):
+                raise
+            return {burst_key: list(files)}
+
+    _fallback_key = next(iter(grouped_slc_files)) if grouped_slc_files else "phase_linking"
+    grouped_amp_dispersion_files = _group_or_fallback(
+        cfg.amplitude_dispersion_files, _fallback_key
+    )
+    grouped_amp_mean_files = _group_or_fallback(
+        cfg.amplitude_mean_files, _fallback_key
+    )
+    grouped_layover_shadow_mask_files = _group_or_fallback(
+        cfg.layover_shadow_mask_files, _fallback_key
+    )
 
     # ######################################
     # 1. Burst-wise Wrapped phase estimation
