@@ -126,12 +126,16 @@ def run(
         cfg.layover_shadow_mask_files[0] if cfg.layover_shadow_mask_files else None
     )
     # Create a mask file from input bounding polygons and/or specified output bounds
+    # Use the first non-compressed SLC as template to ensure consistent dimensions
+    # across all masks (make_nodata_mask uses the last file, so all files must match)
+    # Use first non-compressed SLC (or first file if no non-compressed SLCs)
+    mask_template = non_compressed_slcs[0] if non_compressed_slcs else input_file_list[0]
     mask_filename = _get_mask(
         output_dir=cfg.work_directory,
         output_bounds=cfg.output_options.bounds,
         output_bounds_wkt=cfg.output_options.bounds_wkt,
         output_bounds_epsg=cfg.output_options.bounds_epsg,
-        like_filename=vrt_stack.outfile,
+        like_filename=mask_template,
         layover_shadow_mask=layover_shadow_mask,
         cslc_file_list=non_compressed_slcs,
         subdataset=subdataset,
