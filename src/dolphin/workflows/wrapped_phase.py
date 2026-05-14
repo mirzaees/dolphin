@@ -70,6 +70,7 @@ class WrappedPhaseOutput(NamedTuple):
 def run(
     cfg: DisplacementWorkflow,
     debug: bool = False,
+    raise_on_empty: bool = True,
     max_workers: int = 1,
     tqdm_kwargs=None,
 ) -> WrappedPhaseOutput:
@@ -82,6 +83,11 @@ def run(
         for controlling the workflow.
     debug : bool, optional
         Enable debug logging, by default False.
+    raise_on_empty : bool
+        If True, raises a `MaskingError` on the creation of a mask file with
+        no valid pixels.
+        Otherwise, raises a warning.
+        Default is True.
     max_workers : int, optional
         Number of workers to use to process blocks during phase linking, by default 1.
     tqdm_kwargs : dict, optional
@@ -135,6 +141,7 @@ def run(
         layover_shadow_mask=layover_shadow_mask,
         cslc_file_list=non_compressed_slcs,
         subdataset=subdataset,
+        raise_on_empty=raise_on_empty,
     )
 
     nodata_mask = masking.load_mask_as_numpy(mask_filename) if mask_filename else None
@@ -547,6 +554,7 @@ def _get_mask(
     layover_shadow_mask: Filename | None,
     cslc_file_list: Sequence[Filename],
     subdataset: str | None = None,
+    raise_on_empty: bool = True,
 ) -> Path | None:
     # Make the nodata mask from the polygons, if we're using OPERA CSLCs
     mask_files: list[Path] = []
@@ -590,6 +598,7 @@ def _get_mask(
             mask_files=mask_files,
             output_file=combined_mask_filename,
             output_convention=masking.MaskConvention.ZERO_IS_NODATA,
+            raise_on_empty=raise_on_empty,
         )
     return combined_mask_filename
 
