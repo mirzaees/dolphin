@@ -109,13 +109,13 @@ def run(
                 raise
             return {burst_key: list(files)}
 
-    _fallback_key = next(iter(grouped_slc_files)) if grouped_slc_files else "phase_linking"
+    _fallback_key = (
+        next(iter(grouped_slc_files)) if grouped_slc_files else "phase_linking"
+    )
     grouped_amp_dispersion_files = _group_or_fallback(
         cfg.amplitude_dispersion_files, _fallback_key
     )
-    grouped_amp_mean_files = _group_or_fallback(
-        cfg.amplitude_mean_files, _fallback_key
-    )
+    grouped_amp_mean_files = _group_or_fallback(cfg.amplitude_mean_files, _fallback_key)
     grouped_layover_shadow_mask_files = _group_or_fallback(
         cfg.layover_shadow_mask_files, _fallback_key
     )
