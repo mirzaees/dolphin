@@ -735,7 +735,7 @@ def write_arr(
             bnd.WriteArray(arr[i])
 
     ds_out.FlushCache()
-    ds_out = None
+    ds_out.Close()
 
 
 def write_block(
@@ -799,6 +799,7 @@ def _write_gdal(
     if band is not None:
         bnd = ds.GetRasterBand(band)
         bnd.WriteArray(cur_block, col_start, row_start)
+        bnd.FlushCache()
         bnd = None
     else:
         for b_idx, cur_image in enumerate(cur_block, start=1):
@@ -808,7 +809,9 @@ def _write_gdal(
             bnd.WriteArray(cur_image, col_start, row_start)
             bnd.FlushCache()
             bnd = None
-    ds = None
+    # Flush the dataset itself to ensure data is written to disk (GDAL 3.12+)
+    ds.Close()
+    # ds = None
 
 
 def _write_hdf5(
